@@ -1,0 +1,52 @@
+{
+  "name": "event-runner",
+  "version": "2.4.0",
+  "description": "Phần mềm điều khiển sự kiện chạy nhạc và màn hình LED đồng bộ trong một cue",
+  "main": "main.js",
+  "author": "Event Runner Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/logic.test.js",
+    "check": "node -e \"const fs=require('fs'),cp=require('child_process');['main.js','preload.js','src/shared/logic.js','src/shared/path-utils.js','src/control/audio-engine.js','src/control/midi-hotkey.js','src/control/control-app.js','src/output/output-app.js','tests/logic.test.js'].forEach(f=>{cp.execFileSync(process.execPath,['--check',f],{stdio:'inherit'})});console.log('Syntax OK');\"",
+    "build": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "vn.eventrunner.showcontrol",
+    "productName": "EVENT RUNNER",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "control.html",
+      "output.html",
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "EventRunner-Portable-${version}.exe"
+    }
+  }
+}

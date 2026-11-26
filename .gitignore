@@ -1,0 +1,13 @@
+# Thư viện cài đặt (cài lại bằng npm install)
+node_modules/
+**/node_modules/
+
+# File đóng gói .exe dung lượng lớn (>100MB GitHub chặn push)
+dist/
+**/dist/
+
+# Tệp tạm hệ điều hành & nhật ký lỗi
+*.log
+npm-debug.log*
+Thumbs.db
+.DS_Store

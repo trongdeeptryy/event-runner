@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none';">
+  <title>EVENT RUNNER — Màn hình LED</title>
+  <link rel="stylesheet" href="src/styles/output.css">
+</head>
+<body>
+  <!-- Lớp rung nhẹ liên tục làm nền (transform thuần GPU bằng requestAnimationFrame) -->
+  <div id="idle">
+    <!-- Sân khấu chịu hiệu ứng beat FX (element.animate cộng dồn bên trong #idle) -->
+    <div id="stage">
+      <div id="layer-container"></div>
+    </div>
+  </div>
+
+  <!-- Lớp chớp trắng toàn màn khi có flash beat -->
+  <div id="flash-overlay"></div>
+
+  <!-- Lớp chữ hiển thị theo cue trên LED -->
+  <div id="text-overlay" class="pos-bottom hidden">
+    <div id="text-box"></div>
+  </div>
+
+  <!-- Lớp phủ đen màn (panic B) -->
+  <div id="blackout-overlay"></div>
+
+  <!-- Lớp màn thử LED SMPTE (phím T) -->
+  <div id="test-pattern" class="hidden">
+    <canvas id="test-canvas"></canvas>
+    <div id="test-badge">LED OK ✔ — 1920 × 1080</div>
+  </div>
+
+  <script src="src/shared/logic.js"></script>
+  <script src="src/output/output-app.js"></script>
+</body>
+</html>
