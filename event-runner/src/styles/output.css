@@ -1,4 +1,4 @@
-/* Giao diện cửa sổ LED — nền đen tuyệt đối, không viền, tối ưu GPU */
+/* Giao diện cửa sổ LED — Compositor GPU đa tầng 60–144 FPS, nền đen tuyệt đối */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -12,6 +12,17 @@ html, body {
   background: #000000;
   user-select: none;
   cursor: none;
+}
+
+#output-mapping-root {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000000;
+  transform-origin: center center;
+  will-change: transform, clip-path;
 }
 
 #idle {
@@ -39,6 +50,28 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: #000000;
+  transform-origin: center center;
+  will-change: opacity, transform;
+}
+
+.vj-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+  transform-origin: center center;
+  will-change: opacity, transform;
+}
+
+#vj-layer-2 {
+  z-index: 5;
+}
+
+#vj-layer-3 {
+  z-index: 6;
 }
 
 .media-layer {
@@ -48,11 +81,12 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: transparent;
-  will-change: opacity, transform;
+  will-change: opacity, transform, clip-path, filter;
 }
 
 .media-layer img,
-.media-layer video {
+.media-layer video,
+.media-layer canvas.generator-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -69,6 +103,25 @@ html, body {
   object-fit: cover;
 }
 
+#fx-glitch-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 12;
+}
+
+#beat-led-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 15;
+  mix-blend-mode: plus-lighter;
+}
+
 #flash-overlay {
   position: fixed;
   inset: 0;
@@ -78,6 +131,342 @@ html, body {
   z-index: 20;
   will-change: opacity;
 }
+
+/* ============================================================================
+ * LỚP PHỦ ĐỒ HỌA VMIX (OV1 LOWER THIRD, OV2 LOGO, OV3 TIMER, OV4 TICKER)
+ * ============================================================================ */
+
+#overlays-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+  overflow: hidden;
+}
+
+.ov-layer {
+  position: absolute;
+  pointer-events: none;
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  transition: opacity 0.36s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.ov-layer.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* OV1 — Lower Third */
+#ov-lower-third {
+  --ov-accent: #00d2ff;
+  max-width: min(74vw, 1080px);
+  font-family: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+}
+
+#ov-lower-third.hidden {
+  transform: translate3d(0, 22px, 0);
+}
+
+#ov-lower-third.pos-bottom-left {
+  left: 4vw;
+  bottom: 6vh;
+}
+
+#ov-lower-third.pos-bottom-center {
+  left: 50%;
+  bottom: 6vh;
+  transform: translate3d(-50%, 0, 0);
+}
+
+#ov-lower-third.pos-bottom-center.hidden {
+  transform: translate3d(-50%, 22px, 0);
+}
+
+#ov-lower-third.pos-bottom-right {
+  right: 4vw;
+  bottom: 6vh;
+}
+
+#ov-lower-third.pos-top-left {
+  left: 4vw;
+  top: 5vh;
+}
+
+#ov-lower-third.pos-top-left.hidden,
+#ov-lower-third.pos-top-right.hidden {
+  transform: translate3d(0, -22px, 0);
+}
+
+#ov-lower-third.pos-top-center {
+  left: 50%;
+  top: 5vh;
+  transform: translate3d(-50%, 0, 0);
+}
+
+#ov-lower-third.pos-top-center.hidden {
+  transform: translate3d(-50%, -22px, 0);
+}
+
+#ov-lower-third.pos-top-right {
+  right: 4vw;
+  top: 5vh;
+}
+
+.lt-card {
+  display: flex;
+  align-items: stretch;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+}
+
+.lt-accent {
+  width: 8px;
+  flex-shrink: 0;
+  background: var(--ov-accent);
+}
+
+.lt-body {
+  padding: 14px 26px 14px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.lt-title {
+  font-size: clamp(22px, 2.3vw, 42px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.3px;
+}
+
+.lt-sub {
+  font-size: clamp(14px, 1.35vw, 24px);
+  font-weight: 500;
+  line-height: 1.25;
+  opacity: 0.9;
+}
+
+.lt-sub:empty {
+  display: none;
+}
+
+/* Theme 1: Modern */
+#ov-lower-third.theme-modern .lt-card {
+  background: linear-gradient(125deg, rgba(11, 17, 28, 0.92), rgba(20, 31, 49, 0.86));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px);
+}
+
+#ov-lower-third.theme-modern .lt-title {
+  color: #f8fafc;
+}
+
+#ov-lower-third.theme-modern .lt-sub {
+  color: #cbd5e1;
+}
+
+/* Theme 2: Neon */
+#ov-lower-third.theme-neon .lt-card {
+  background: rgba(6, 10, 20, 0.88);
+  border: 2px solid var(--ov-accent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--ov-accent) 45%, transparent), 0 12px 32px rgba(0, 0, 0, 0.7);
+}
+
+#ov-lower-third.theme-neon .lt-accent {
+  width: 10px;
+  box-shadow: 0 0 18px var(--ov-accent);
+}
+
+#ov-lower-third.theme-neon .lt-title {
+  color: #ffffff;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--ov-accent) 70%, transparent);
+}
+
+#ov-lower-third.theme-neon .lt-sub {
+  color: var(--ov-accent);
+  font-weight: 600;
+}
+
+/* Theme 3: Corporate */
+#ov-lower-third.theme-corporate .lt-card {
+  background: rgba(248, 250, 252, 0.96);
+  border-radius: 6px;
+  border-bottom: 4px solid var(--ov-accent);
+}
+
+#ov-lower-third.theme-corporate .lt-accent {
+  width: 12px;
+}
+
+#ov-lower-third.theme-corporate .lt-title {
+  color: #0f172a;
+}
+
+#ov-lower-third.theme-corporate .lt-sub {
+  color: #334155;
+}
+
+/* Theme 4: Breaking */
+#ov-lower-third.theme-breaking .lt-card {
+  background: linear-gradient(90deg, rgba(153, 27, 27, 0.96), rgba(15, 23, 42, 0.94) 38%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+}
+
+#ov-lower-third.theme-breaking .lt-accent {
+  width: 12px;
+  background: #fbbf24;
+}
+
+#ov-lower-third.theme-breaking .lt-title {
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+}
+
+#ov-lower-third.theme-breaking .lt-sub {
+  color: #fde68a;
+  font-weight: 600;
+}
+
+/* OV2 — Corner Logo */
+#ov-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#ov-logo.hidden {
+  transform: scale(0.94);
+}
+
+#ov-logo img.ov-logo-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 36vh;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.55));
+}
+
+/* OV3 — Event Timer / Countdown */
+#ov-timer {
+  font-family: 'Bahnschrift', 'Consolas', 'Segoe UI', sans-serif;
+}
+
+#ov-timer.pos-top-left { left: 3vw; top: 3.5vh; }
+#ov-timer.pos-top-right { right: 3vw; top: 3.5vh; }
+#ov-timer.pos-top-center { left: 50%; top: 3.5vh; transform: translate3d(-50%, 0, 0); }
+#ov-timer.pos-top-center.hidden { transform: translate3d(-50%, -14px, 0); }
+#ov-timer.pos-bottom-left { left: 3vw; bottom: 4vh; }
+#ov-timer.pos-bottom-right { right: 3vw; bottom: 4vh; }
+#ov-timer.pos-bottom-center { left: 50%; bottom: 4vh; transform: translate3d(-50%, 0, 0); }
+#ov-timer.pos-bottom-center.hidden { transform: translate3d(-50%, 14px, 0); }
+#ov-timer.pos-center { left: 50%; top: 50%; transform: translate3d(-50%, -50%, 0); }
+#ov-timer.pos-center.hidden { transform: translate3d(-50%, -50%, 0) scale(0.95); }
+
+.ov-timer-box {
+  background: rgba(8, 13, 24, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 10px 22px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.ov-timer-label {
+  font-size: 0.34em;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin-bottom: 2px;
+}
+
+.ov-timer-label:empty {
+  display: none;
+}
+
+.ov-timer-value {
+  font-weight: 700;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.7);
+}
+
+#ov-timer.urgent .ov-timer-box {
+  background: rgba(127, 29, 29, 0.88);
+  border-color: #ff4d4f;
+  box-shadow: 0 0 28px rgba(255, 77, 79, 0.55), 0 10px 30px rgba(0, 0, 0, 0.6);
+  animation: ov-timer-urgent-pulse 0.85s ease-in-out infinite;
+}
+
+#ov-timer.urgent .ov-timer-value {
+  color: #fff1f2 !important;
+}
+
+@keyframes ov-timer-urgent-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+/* OV4 — Marquee Ticker */
+#ov-ticker {
+  left: 0;
+  right: 0;
+  width: 100%;
+  font-family: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+}
+
+#ov-ticker.pos-top {
+  top: 0;
+}
+
+#ov-ticker.pos-top.hidden {
+  transform: translate3d(0, -100%, 0);
+}
+
+#ov-ticker.pos-bottom {
+  bottom: 0;
+}
+
+#ov-ticker.pos-bottom.hidden {
+  transform: translate3d(0, 100%, 0);
+}
+
+.ov-ticker-bar {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0.36em 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ov-ticker-track {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.ov-ticker-item {
+  display: inline-block;
+  font-weight: 600;
+  line-height: 1.25;
+  padding-right: 4em;
+}
+
+/* ============================================================================
+ * LỚP CHỮ THEO CUE + VIGNETTE + DIMMER + BLACKOUT + TEST PATTERN
+ * ============================================================================ */
 
 #text-overlay {
   position: fixed;
@@ -127,6 +516,25 @@ html, body {
   padding: 0.35em 0.85em;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+#master-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 34;
+  opacity: 0;
+  will-change: opacity;
+}
+
+#master-dimmer {
+  position: fixed;
+  inset: 0;
+  background: #000000;
+  pointer-events: none;
+  z-index: 36;
+  opacity: 0;
+  will-change: opacity;
 }
 
 #blackout-overlay {

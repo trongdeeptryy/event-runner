@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('api', {
   sendToLed: (cmd) => ipcRenderer.send('out', cmd),
   notifyLedReady: () => ipcRenderer.send('led-ready'),
   notifyLedMediaError: (payload) => ipcRenderer.send('led-media-error', payload),
+  notifyLedVideoBeat: (payload) => ipcRenderer.send('led-video-beat', payload),
+  notifyLedVideoTelemetry: (payload) => ipcRenderer.send('led-video-telemetry', payload),
   reportRendererError: (payload) => ipcRenderer.send('renderer-error', payload),
   setShowRunningState: (running) => ipcRenderer.send('show-running-state', running),
 
@@ -81,6 +83,16 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('led-media-error', handler);
     return () => ipcRenderer.removeListener('led-media-error', handler);
+  },
+  onLedVideoBeat: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('led-video-beat', handler);
+    return () => ipcRenderer.removeListener('led-video-beat', handler);
+  },
+  onLedVideoTelemetry: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('led-video-telemetry', handler);
+    return () => ipcRenderer.removeListener('led-video-telemetry', handler);
   },
   onRemoteCommand: (callback) => {
     const handler = (_event, cmd) => callback(cmd);
@@ -121,6 +133,37 @@ contextBridge.exposeInMainWorld('api', {
   getRemoteStatus: () => ipcRenderer.invoke('remote:status'),
   toggleRemote: (enable, pin) => ipcRenderer.invoke('remote:toggle', { enable, pin }),
   broadcastRemoteState: (state) => ipcRenderer.send('remote:broadcastState', state),
+
+  // Stage Display (Màn hình MC / Sân khấu kiểu FreeShow)
+  openStage: (displayId) => ipcRenderer.invoke('stage:open', displayId),
+  closeStage: () => ipcRenderer.invoke('stage:close'),
+  getStageStatus: () => ipcRenderer.invoke('stage:status'),
+  sendToStage: (payload) => ipcRenderer.send('stage:send', payload),
+  onStageStatusChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('stage-status-changed', handler);
+    return () => ipcRenderer.removeListener('stage-status-changed', handler);
+  },
+  onStageUpdate: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('stage-update', handler);
+    return () => ipcRenderer.removeListener('stage-update', handler);
+  },
+  notifyStageReady: () => ipcRenderer.send('stage-ready'),
+
+  // DMX Art-Net / sACN
+  configureDmx: (cfg) => ipcRenderer.invoke('dmx:configure', cfg),
+  sendDmxFrame: (channels) => ipcRenderer.send('dmx:frame', channels),
+  getDmxStatus: () => ipcRenderer.invoke('dmx:status'),
+
+  // OSC UDP Listener
+  toggleOsc: (enable, port) => ipcRenderer.invoke('osc:toggle', { enable, port }),
+  getOscStatus: () => ipcRenderer.invoke('osc:status'),
+  onOscMessage: (callback) => {
+    const handler = (_event, msg) => callback(msg);
+    ipcRenderer.on('osc-message', handler);
+    return () => ipcRenderer.removeListener('osc-message', handler);
+  },
 
   // Tiện ích đồng bộ (chạy tức thời không tốn vòng IPC)
   toFileUrl: resolveFileUrlSync,

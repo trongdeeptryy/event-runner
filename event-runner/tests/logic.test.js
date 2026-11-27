@@ -258,9 +258,11 @@ test('validateAndMigrateProject (Tiêu chí 8): mở dự án cũ không có tr�
   const mutedVideoCue = logic.normalizeCue({ name: 'Clip tắt tiếng', vis: 'C:/show/bg.mp4', vsound: false, vvol: 80 });
   assert.equal(mutedVideoCue.vsound, false);
   assert.equal(mutedVideoCue.vvol, 80);
-  // Hỗ trợ nguồn beat trực tiếp từ Mixer / DJ ('ext') và nâng cấp dự án cũ lên đủ 6 nút SFX vuông kèm phím mặc định F1..F6
+  // Hỗ trợ nguồn beat trực tiếp từ Mixer / DJ ('ext') và tiếng video đang phát ('video'), nâng cấp dự án cũ lên đủ 6 nút SFX vuông kèm phím mặc định F1..F6
   const djCue = logic.normalizeCue({ name: 'DJ Set', vis: 'C:/show/dj-bg.mp4', fx: { on: true, src: 'ext' } });
   assert.equal(djCue.fx.src, 'ext');
+  const videoFxCue = logic.normalizeCue({ name: 'MV Nhạc', vis: 'C:/show/mv.mp4', fx: { on: true, src: 'video' } });
+  assert.equal(videoFxCue.fx.src, 'video');
   assert.equal(res.project.sfxPads.length, 6);
   assert.equal(res.project.sfxPads[0].hotkey, 'F1');
   assert.equal(res.project.sfxPads[0].hotkeyLabel, 'F1');
@@ -346,4 +348,61 @@ test('buildCuesFromMediaPaths: tự phân loại Ảnh, Video, Nhạc khi kéo t
   assert.equal(cues[2].name, '03_Nhac_Nen_Remix');
   assert.equal(cues[2].aud, 'D:\\Media\\03_Nhac_Nen_Remix.mp3');
   assert.equal(cues[2].vis, null);
+});
+
+test('v3.0 Pro schema & helpers: constants, factories, VJ Deck A pre-population, DMX fixtures & AudioWorklet purity', () => {
+  assert.equal(logic.TRANSITION_TYPES.length, 12);
+  assert.ok(logic.TRANSITION_TYPES.includes('flash-cut'));
+  assert.equal(logic.BLEND_MODES.length, 9);
+  assert.equal(logic.LED_STROBE_MODES.length, 8);
+  assert.equal(logic.VJ_GENERATORS.length, 6);
+
+  for (const key of ['white', 'cyber', 'fire', 'rainbow', 'gala', 'ice', 'custom']) {
+    assert.ok(logic.LED_PALETTES[key]);
+    assert.ok(typeof logic.LED_PALETTES[key].name === 'string');
+    assert.ok(Array.isArray(logic.LED_PALETTES[key].colors) && logic.LED_PALETTES[key].colors.length > 0);
+  }
+
+  for (const presetName of ['Club Drop', 'EDM Strobe', 'Viền Sân Khấu', 'Chớp 4 Góc', 'Equalizer LED', 'Gala Nhẹ', 'Âm bản Kick']) {
+    const p = logic.LED_STROBE_PRESETS[presetName];
+    assert.ok(p, `Thiếu preset ${presetName}`);
+    const normalized = logic.createDefaultLedSync(p);
+    assert.equal(normalized.mode, p.mode);
+  }
+
+  // Color helpers
+  assert.deepEqual(logic.hexToRgb('#00d2ff'), { r: 0, g: 210, b: 255 });
+  assert.deepEqual(logic.hexToRgb('#f0a'), { r: 255, g: 0, b: 170 });
+  assert.deepEqual(logic.hexToRgb('bad-hex'), { r: 0, g: 0, b: 0 });
+  assert.deepEqual(logic.resolvePaletteColors({ palette: 'custom', colorA: '#112233', colorB: '#445566' }), ['#112233', '#445566']);
+
+  // VJ Deck default structure (3 decks x 3 layers x 4 columns)
+  const vj = logic.createDefaultVjDeck();
+  assert.equal(vj.activeDeckIndex, 0);
+  assert.equal(vj.layers.length, 3);
+  assert.equal(vj.decks.length, 3);
+  assert.equal(vj.decks[0][1][0].generator, 'cyber-grid');
+  assert.equal(vj.decks[0][1][1].generator, 'plasma-wave');
+  assert.equal(vj.decks[0][1][2].kind, 'empty');
+  assert.deepEqual(vj.decks[0][2].map((c) => c.generator), ['laser-beams', 'strobe-matrix', 'pulse-rings', 'spectrum-bars']);
+
+  // VJ Deck clip vsound default & override
+  const vjWithVideo = logic.createDefaultVjDeck({
+    decks: [
+      [[{ id: 'c-v1', kind: 'video', path: 'C:/show/loop.mp4' }, { id: 'c-v2', kind: 'video', path: 'C:/show/mute.mp4', vsound: false }]]
+    ]
+  });
+  assert.equal(vjWithVideo.decks[0][0][0].vsound, true);
+  assert.equal(vjWithVideo.decks[0][0][1].vsound, false);
+
+  // Default 8 DMX Par LEDs on channels 1,5,9,13,17,21,25,29
+  const dmx = logic.createDefaultDmxConfig();
+  assert.deepEqual(dmx.fixtures.map((f) => f.startChannel), [1, 5, 9, 13, 17, 21, 25, 29]);
+  assert.ok(dmx.fixtures.every((f) => f.type === 'drgb'));
+
+  // Đảm bảo createOnsetDetector hoàn toàn độc lập để nhúng vào AudioWorklet Blob
+  const standaloneFactory = new Function('return (' + logic.createOnsetDetector.toString() + ')')();
+  const det = standaloneFactory({ sampleRate: 48000, blockSize: 128 });
+  assert.equal(typeof det.processBlock, 'function');
+  assert.deepEqual(det.getLastMetrics().env, 0);
 });

@@ -1,10 +1,10 @@
 /**
- * Controller chính của Bảng điều khiển EVENT RUNNER v2.4 (Giao diện 3 Cột)
- * Kết nối toàn bộ luồng vận hành show:
- * - Header mỏng với menu Tệp / Chỉnh sửa / Tùy chọn / Sự kiện / Trợ giúp & Segmented Mode (BIÊN TẬP / TẬP DƯỢT / CHẾ ĐỘ SHOW)
- * - Cột trái: Danh sách thẻ Cue gọn sạch (click chọn KẾ TIẾP, nháy đúp phát ngay, sóng âm mini)
- * - Cột giữa: 2 màn hình 16:9 song song, nút GO lớn, cột nút phụ trợ, sóng âm tương tác, 4 SFX & VU Meter
- * - Cột phải: Thuộc tính Cue 4 tab + Phân tích bass DSP AudioWorklet + Rung nhẹ liên tục (Idle Shake)
+ * Controller chính của Bảng điều khiển EVENT RUNNER v3.0 PRO (Giao diện 3 Cột)
+ * Tích hợp đồng bộ:
+ * - Kịch bản Cue v2.4 (kéo thả batch, Undo/Redo, sóng âm, Beat FX DSP, Idle Shake, SFX F1-F6)
+ * - Resolume 3-Layer VJ Deck (3 Deck A/B/C × 3 Layer × 4 Slots, Generator & Camera Input)
+ * - vMix Switcher Strip (T-Bar thủ công, Cut/Fade/Wipe/FTB, 4 Overlays + Stage Display FreeShow)
+ * - Beat-Synced LED Strobe & DMX Art-Net/sACN + OSC UDP + MIDI Clock & Faders
  */
 'use strict';
 
@@ -22,14 +22,39 @@
     audioEngine.disposeBassBranch();
   });
 
-  // Trạng thái toàn cục
-  const state = {
-    project: {
-      version: 1,
+  const MIDI_ACTION_KEYS = [
+    'go', 'blackout', 'stopAll', 'fadeMusic', 'tapBpm', 'strobeHold', 'flashHit',
+    'ov1', 'ov2', 'ov3', 'ov4', 'col1', 'col2', 'col3', 'col4',
+    'tbar', 'masterDimmer', 'strobeIntensity'
+  ];
+
+  const GENERATOR_TITLES = {
+    'spectrum-bars': 'Cột phổ nhạc (Spectrum Bars)',
+    'laser-beams': 'Chùm tia Laser (Laser Beams)',
+    'strobe-matrix': 'Ma trận LED (Strobe Matrix)',
+    'pulse-rings': 'Vòng xung (Pulse Rings)',
+    'cyber-grid': 'Lưới Cyber (Cyber Grid)',
+    'plasma-wave': 'Sóng Plasma (Plasma Wave)'
+  };
+
+  function createEmptyProject() {
+    return {
+      version: 2,
       cues: [],
       sfxPads: logic.createDefaultSfxPads(),
-      customFxPresets: {}
-    },
+      customFxPresets: {},
+      overlays: logic.createDefaultOverlays(),
+      vjDeck: logic.createDefaultVjDeck(),
+      masterFx: logic.createDefaultMasterFx(),
+      outputMapping: logic.createDefaultOutputMapping(),
+      dmxConfig: logic.createDefaultDmxConfig(),
+      oscConfig: logic.createDefaultOscConfig()
+    };
+  }
+
+  // Trạng thái toàn cục
+  const state = {
+    project: createEmptyProject(),
     projectFilePath: null,
     selectedIndex: -1,
     liveCueId: null,
@@ -43,16 +68,41 @@
     testBeatOn: false,
     testIdleOn: false,
     ledStatus: { isOpen: false, mode: 'closed' },
+    stageStatus: { isOpen: false, mode: 'closed' },
     displays: [],
+    videoDevices: [],
     settings: {},
     fileExistsMap: {},
     codecErrorMap: {},
     autoFollowTimer: null,
     autoFollowEndTime: 0,
     isSeekingAudio: false,
+    isCommittingTbar: false,
     tapTimestamps: [],
     activeTrackPeaks: null,
-    sfxVuLevel: 0
+    sfxVuLevel: 0,
+    masterBpm: 120,
+    autoBpmEnabled: false,
+    beatTimesForAutoBpm: [],
+    lastAudioBands: { bass: 0, mid: 0, high: 0, spectrum: [] },
+    ledVideoTelemetry: {
+      playing: false,
+      updatedAtMs: 0,
+      bass: 0,
+      mid: 0,
+      high: 0,
+      env: 0,
+      spectrum: new Array(48).fill(0)
+    },
+    localVideoEnv: 0,
+    lastAudioBandsSentMs: 0,
+    lastDmxSentMs: 0,
+    lastStageSentMs: 0,
+    lastLedBeatHitMs: 0,
+    lastBandPeakMs: 0,
+    lastStageSig: '',
+    beatPulseLevel: 0,
+    lastBeatState: { phase: 0, beatInBar: 0, beatIndex: 0 }
   };
 
   // Undo / Redo stack
@@ -61,20 +111,46 @@
   const MAX_UNDO = 50;
   let autosaveTimer = null;
 
-  // Bộ theo dõi nhịp BPM + bộ thử BPM
+  // Bộ theo dõi nhịp BPM + bộ thử BPM + MasterBeatClock
   const bpmBeatTracker = new logic.BpmBeatTracker(0.04);
   const testBeatTracker = new logic.BpmBeatTracker(0.04);
+  const masterBeatClock = new logic.MasterBeatClock(120, 1);
   let testBeatStartMs = 0;
   let lampTimeout = null;
+  let lastAnimMs = performance.now();
 
   // Dữ liệu biểu đồ phân tích bass 4 giây gần nhất & tính beat/giây
   const bassChartPoints = [];
   const bassChartBeats = [];
   const beatRateTimestamps = [];
 
-  // Bộ quản lý phím tắt bàn phím / MIDI và bộ hẹn giờ đèn viền DJ cho 6 ô SFX
   let appInputMapper = null;
   const sfxBurstTimers = new Map();
+
+  // Các UI Controller con (v3.0 Pro)
+  let vjDeckUi = null;
+  let overlaysUi = null;
+  let ledDmxUi = null;
+
+  const thumbImageCache = new Map();
+  const MAX_THUMB_CACHE = 80;
+  let selectionCommitTimer = null;
+  let preloadDebounceTimer = null;
+  let waveformToken = 0;
+  let hadPlayingWave = false;
+  let lastVideoStatusUiMs = 0;
+
+  // Vật lý Beat FX nhẹ cho màn hình Live Preview (chế độ 1 màn hình / Tập dượt)
+  const previewBeatPhys = {
+    x: 0, vx: 0, y: 0, vy: 0,
+    rot: 0, vRot: 0, scale: 0, vScale: 0,
+    bright: 0, vBright: 0, hue: 0, vHue: 0,
+    flash: 0, vFlash: 0,
+    omega: 18, zeta: 1.04,
+    motion: 'smooth', shakeUnit: 8,
+    lastBeatAngle: NaN, lastBeatTimeMs: 0, rotSign: 1,
+    active: false
+  };
 
   const thumbObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -90,7 +166,6 @@
 
   const $ = (id) => document.getElementById(id);
 
-  /** Định dạng giây sang HH:MM:SS */
   function formatTimeHMS(seconds) {
     const s = Math.max(0, Math.floor(Number(seconds) || 0));
     const hrs = Math.floor(s / 3600);
@@ -104,11 +179,11 @@
   }
 
   // =========================================================================
-  // ĐỒNG HỒ MỨC ÂM THANH (VU METER)
+  // ĐỒNG HỒ MỨC ÂM THANH (VU METER) & 3-BAND METERS
   // =========================================================================
 
   function initVuMeters() {
-    ['master-vu-meter', 'sfx-vu-meter', 'ext-opt-vu-meter', 'fx-ext-vu-meter'].forEach((id) => {
+    ['master-vu-meter', 'sfx-vu-meter', 'ext-opt-vu-meter', 'fx-ext-vu-meter', 'fx-video-vu-meter'].forEach((id) => {
       const container = $(id);
       if (!container) return;
       container.innerHTML = '';
@@ -134,6 +209,15 @@
         else seg.classList.add('on-green');
       }
     }
+  }
+
+  function updateThreeBandMeters(bands) {
+    const b = $('band-meter-bass');
+    const m = $('band-meter-mid');
+    const h = $('band-meter-high');
+    if (b) b.style.width = `${Math.round(logic.clamp(bands.bass, 0, 1) * 100)}%`;
+    if (m) m.style.width = `${Math.round(logic.clamp(bands.mid, 0, 1) * 100)}%`;
+    if (h) h.style.width = `${Math.round(logic.clamp(bands.high, 0, 1) * 100)}%`;
   }
 
   // =========================================================================
@@ -168,18 +252,19 @@
     setSectionEnabled('group-idle-fx', Boolean(cue && cue.fx && cue.fx.idleOn));
     setSectionEnabled('group-overscan-fx', Boolean(cue && cue.fx && (cue.fx.on || cue.fx.idleOn)));
     setSectionEnabled('group-text-fx', Boolean(cue && cue.text && cue.text.on));
+    setSectionEnabled('group-ledsync-body', Boolean(
+      (ledDmxUi && ledDmxUi.globalOverride && ledDmxUi.globalConfig.on) ||
+      (cue && cue.ledSync && cue.ledSync.on)
+    ));
     const remChk = $('remote-enable');
-    if (remChk) {
-      setSectionEnabled('group-remote-pin', Boolean(remChk.checked));
-    }
+    if (remChk) setSectionEnabled('group-remote-pin', Boolean(remChk.checked));
     const extChk = $('ext-input-enable');
-    if (extChk) {
-      setSectionEnabled('group-ext-options', Boolean(extChk.checked));
-    }
+    if (extChk) setSectionEnabled('group-ext-options', Boolean(extChk.checked));
   }
 
   function setOperatingMode(mode) {
     const valid = ['edit', 'rehearsal', 'show'].includes(mode) ? mode : 'edit';
+    const wasRehearsal = state.rehearsalMode;
     state.operatingMode = valid;
     state.showMode = valid === 'show';
     state.rehearsalMode = valid === 'rehearsal';
@@ -188,7 +273,6 @@
       btn.classList.toggle('active', btn.dataset.mode === valid);
     });
 
-    // Khóa các nút thêm/sửa/xóa kịch bản khi ở CHẾ ĐỘ SHOW nhưng giữ nguyên khung 3 cột & cho chỉnh FX/Vol
     document.querySelectorAll('.edit-lockable').forEach((el) => {
       el.disabled = state.showMode;
     });
@@ -202,16 +286,33 @@
     $('lock-badge').classList.toggle('hidden', !state.showMode);
     audioEngine.setRehearsalMode(state.rehearsalMode);
     renderCueList();
+    if (vjDeckUi) vjDeckUi.render();
     syncAllToggleSections(getSelectedCue());
     syncLivePreviewVideoAudio();
+    syncAnalysisSourceRouting();
+
+    if (!wasRehearsal && state.rehearsalMode && state.ledStatus.isOpen) {
+      window.api.sendToLed({ type: 'video-audio', vsound: false, vvol: 0 });
+    } else if (wasRehearsal && !state.rehearsalMode && state.ledStatus.isOpen) {
+      const liveCue = getLiveCue();
+      if (liveCue) {
+        const { visUrl, visKind } = resolveCueVisualInfo(liveCue);
+        window.api.sendToLed({
+          type: 'show',
+          cue: { ...JSON.parse(JSON.stringify(liveCue)), tr: 'cut', dur: 0 },
+          url: visUrl,
+          mediaKind: visKind,
+          masterVol: Number($('master-vol').value),
+          sinkId: state.settings.audioDeviceId || ''
+        });
+      }
+    }
 
     if (state.rehearsalMode) {
       showBanner('Đang bật chế độ TẬP DƯỢT: chỉ phát xem trước trên máy, giảm âm còn 35%, không xuất ra màn LED.');
     } else {
       hideBanner();
     }
-
-    renderCueList();
   }
 
   // =========================================================================
@@ -220,6 +321,13 @@
 
   function cloneProjectData() {
     return JSON.parse(JSON.stringify(state.project));
+  }
+
+  function ensureProjectV3Shape() {
+    const migrated = logic.validateAndMigrateProject(state.project);
+    if (migrated && migrated.project) {
+      state.project = migrated.project;
+    }
   }
 
   function pushUndoSnapshot() {
@@ -239,6 +347,7 @@
     }));
     const prev = JSON.parse(undoStack.pop());
     state.project = prev.project;
+    ensureProjectV3Shape();
     state.selectedIndex = logic.clamp(prev.selectedIndex, -1, state.project.cues.length - 1);
     scheduleAutosave();
     refreshAllUi();
@@ -252,6 +361,7 @@
     }));
     const next = JSON.parse(redoStack.pop());
     state.project = next.project;
+    ensureProjectV3Shape();
     state.selectedIndex = logic.clamp(next.selectedIndex, -1, state.project.cues.length - 1);
     scheduleAutosave();
     refreshAllUi();
@@ -271,11 +381,28 @@
     const paths = new Set();
     for (const cue of state.project.cues) {
       if (cue.aud) paths.add(cue.aud);
-      if (cue.vis) paths.add(cue.vis);
+      if (cue.vis && (!cue.sourceType || cue.sourceType === 'media')) paths.add(cue.vis);
     }
     for (const pad of state.project.sfxPads) {
       if (pad.path) paths.add(pad.path);
     }
+    if (state.project.overlays && state.project.overlays.ov2 && state.project.overlays.ov2.path) {
+      paths.add(state.project.overlays.ov2.path);
+    }
+    if (state.project.vjDeck && Array.isArray(state.project.vjDeck.decks)) {
+      for (const deck of state.project.vjDeck.decks) {
+        if (!Array.isArray(deck)) continue;
+        for (const row of deck) {
+          if (!Array.isArray(row)) continue;
+          for (const clip of row) {
+            if (clip && (clip.kind === 'image' || clip.kind === 'video') && clip.path) {
+              paths.add(clip.path);
+            }
+          }
+        }
+      }
+    }
+
     if (paths.size === 0) {
       state.fileExistsMap = {};
       return;
@@ -298,7 +425,113 @@
   }
 
   // =========================================================================
-  // PHÁT CUE (GO) & ĐỒNG BỘ LED + NHẠC
+  // MASTER BPM CLOCK & STAGE DISPLAY / REMOTE ORCHESTRATION
+  // =========================================================================
+
+  function setMasterBpm(nextBpm, resetClockPhase) {
+    const clamped = Math.round(logic.clamp(nextBpm, 40, 240));
+    state.masterBpm = clamped;
+    masterBeatClock.setBpm(clamped);
+    if (resetClockPhase) {
+      masterBeatClock.resync(performance.now());
+    }
+    if (ledDmxUi) ledDmxUi.updateBpmPillText(clamped);
+    pushStageUpdate(true);
+    syncRemoteState();
+  }
+
+  function handleTapBpm() {
+    const now = performance.now();
+    const prev = state.tapTimestamps.length > 0 ? state.tapTimestamps[state.tapTimestamps.length - 1] : 0;
+    if (now - prev > 2000) {
+      state.tapTimestamps = [];
+      masterBeatClock.resync(now);
+    }
+    state.tapTimestamps.push(now);
+    if (state.tapTimestamps.length > 10) state.tapTimestamps.shift();
+
+    const bpm = logic.calculateTapBpm(state.tapTimestamps);
+    if (bpm !== null) {
+      setMasterBpm(bpm, false);
+      const selCue = getSelectedCue();
+      if (selCue && selCue.fx) {
+        selCue.fx.bpm = bpm;
+        if ($('fx-bpm')) $('fx-bpm').value = bpm;
+        scheduleAutosave();
+        sendLiveCueFxIfActive(selCue);
+      }
+    }
+  }
+
+  function buildStagePayload() {
+    const live = getLiveCue();
+    const next = getSelectedCue();
+    const track = audioEngine.getCurrentTrackInfo();
+    const td = overlaysUi ? overlaysUi.getTimerDisplay() : { text: '--:--', urgent: false, label: 'ĐỒNG HỒ SỰ KIỆN' };
+
+    let cueRemainingText = '';
+    if (track.playing && track.duration > 0) {
+      cueRemainingText = `${logic.formatTime(track.currentTime)} / ${logic.formatTime(track.duration)}`;
+    } else if (state.liveCueId && state.liveStartedAtMs > 0) {
+      cueRemainingText = formatTimeHMS((performance.now() - state.liveStartedAtMs) / 1000);
+    }
+
+    return {
+      liveName: live ? live.name : 'Chưa phát',
+      nextName: next ? next.name : 'Trống',
+      stageNote: live ? (live.note || '') : (next ? (next.note || '') : ''),
+      nextNote: next ? (next.note || '') : '',
+      timerText: td.text,
+      timerLabel: td.label,
+      timerUrgent: Boolean(td.urgent),
+      stageMessage: overlaysUi ? overlaysUi.stageMessage : '',
+      cueRemainingText,
+      blackout: state.blackout,
+      bpm: state.masterBpm,
+      beatPhase: state.lastBeatState.phase,
+      beatInBar: state.lastBeatState.beatInBar,
+      beatIndex: state.lastBeatState.beatIndex
+    };
+  }
+
+  function pushStageUpdate(force) {
+    const payload = buildStagePayload();
+    const sig = `${payload.liveName}|${payload.nextName}|${payload.stageNote}|${payload.timerText}|${payload.timerUrgent}|${payload.stageMessage}|${payload.blackout}|${payload.bpm}|${payload.beatInBar}`;
+    if (force || sig !== state.lastStageSig) {
+      state.lastStageSig = sig;
+      window.api.sendToStage(payload);
+    }
+  }
+
+  function syncRemoteState() {
+    const live = getLiveCue();
+    const next = getSelectedCue();
+    const ov = state.project.overlays || logic.createDefaultOverlays();
+    const activeLs = ledDmxUi ? ledDmxUi.getActiveLedSync() : logic.createDefaultLedSync();
+    const td = overlaysUi ? overlaysUi.getTimerDisplay() : { text: '--:--', urgent: false };
+
+    window.api.broadcastRemoteState({
+      liveName: live ? live.name : 'Chưa phát',
+      nextName: next ? next.name : 'Trống',
+      blackout: state.blackout,
+      bpm: state.masterBpm,
+      ledMode: activeLs.on ? (activeLs.mode || 'off') : 'off',
+      overlays: {
+        ov1: Boolean(ov.ov1 && ov.ov1.active),
+        ov2: Boolean(ov.ov2 && ov.ov2.active),
+        ov3: Boolean(ov.ov3 && ov.ov3.active),
+        ov4: Boolean(ov.ov4 && ov.ov4.active)
+      },
+      sfxNames: (state.project.sfxPads || []).map((p) => p.name || 'SFX'),
+      stageNote: live ? (live.note || '') : (next ? (next.note || '') : ''),
+      timerText: td.text,
+      timerUrgent: Boolean(td.urgent),
+      stageMessage: overlaysUi ? overlaysUi.stageMessage : ''
+    });
+  }
+
+  // =========================================================================
+  // PHÁT CUE (GO) & ĐỒNG BỘ LED + NHẠC + T-BAR
   // =========================================================================
 
   function getSelectedCue() {
@@ -311,13 +544,22 @@
     return state.project.cues.find((c) => c.id === state.liveCueId) || state.liveCueSnapshot;
   }
 
+  function resolveCueVisualInfo(cue) {
+    if (!cue) return { visUrl: null, visKind: null };
+    if (cue.sourceType === 'camera') return { visUrl: null, visKind: 'camera' };
+    if (cue.sourceType === 'generator') return { visUrl: null, visKind: 'generator' };
+    if (!cue.vis) return { visUrl: null, visKind: null };
+    const visUrl = window.api.toFileUrl(cue.vis, state.projectFilePath);
+    const visKind = logic.detectMediaKind(cue.vis) === 'image' ? 'image' : 'video';
+    return { visUrl, visKind };
+  }
+
   function preloadCue(cue) {
     if (!cue) return;
-    if (cue.vis) {
-      const visUrl = window.api.toFileUrl(cue.vis, state.projectFilePath);
-      const kind = logic.detectMediaKind(cue.vis) === 'image' ? 'image' : 'video';
+    const { visUrl, visKind } = resolveCueVisualInfo(cue);
+    if (visUrl && (visKind === 'image' || visKind === 'video')) {
       if (!state.rehearsalMode) {
-        window.api.sendToLed({ type: 'preload', url: visUrl, mediaKind: kind });
+        window.api.sendToLed({ type: 'preload', url: visUrl, mediaKind: visKind });
       }
     }
     if (cue.aud) {
@@ -346,19 +588,23 @@
     }, delayMs);
   }
 
-  function triggerCueAt(index, advanceSelection = true) {
+  function triggerCueAt(index, advanceSelection = true, opts = null) {
     if (index < 0 || index >= state.project.cues.length) return;
+    clearTimeout(selectionCommitTimer);
+    clearTimeout(preloadDebounceTimer);
     const cue = state.project.cues[index];
+    const isRetriggerSameCue = state.liveCueId === cue.id;
+    const cuePayload = JSON.parse(JSON.stringify(cue));
+    if (opts && opts.overrideTr) cuePayload.tr = opts.overrideTr;
+    if (opts && opts.overrideDur !== undefined) cuePayload.dur = opts.overrideDur;
 
-    const visUrl = cue.vis ? window.api.toFileUrl(cue.vis, state.projectFilePath) : null;
-    const visKind = cue.vis ? (logic.detectMediaKind(cue.vis) === 'image' ? 'image' : 'video') : null;
+    const { visUrl, visKind } = resolveCueVisualInfo(cue);
     const audUrl = cue.aud ? window.api.toFileUrl(cue.aud, state.projectFilePath) : null;
 
-    // 1. Gửi lệnh hình sang LED TRƯỚC (kèm mức Master & thiết bị loa cho tiếng gốc video)
     if (!state.rehearsalMode) {
       window.api.sendToLed({
         type: 'show',
-        cue: JSON.parse(JSON.stringify(cue)),
+        cue: cuePayload,
         url: visUrl,
         mediaKind: visKind,
         masterVol: Number($('master-vol').value),
@@ -366,7 +612,6 @@
       });
     }
 
-    // 2. Phát nhạc NGAY SAU trong cùng tick (mặc định tự tắt nhạc Cue trước nếu sang Cue không có nhạc)
     audioEngine.playCue(cue, audUrl);
     if (cue.aud) {
       audioEngine.getWaveformPeaks(cue.aud, state.projectFilePath, 96).then((res) => {
@@ -379,14 +624,19 @@
     state.liveCueId = cue.id;
     state.liveCueSnapshot = JSON.parse(JSON.stringify(cue));
     state.liveStartedAtMs = performance.now();
+    state.ledVideoTelemetry.playing = false;
     bpmBeatTracker.reset();
     window.api.setShowRunningState(true);
 
-    // Nếu Cue đang chạy dùng nguồn beat từ Mixer/DJ thì tự động bật thu Line-In và chuyển mạch DSP sang external
     if (cue.fx && cue.fx.on && cue.fx.src === 'ext' && !audioEngine.isExternalInputActive()) {
       enableExternalMixerInput(true);
     } else {
       syncAnalysisSourceRouting();
+    }
+
+    if (ledDmxUi) {
+      ledDmxUi.renderQuickDeck();
+      ledDmxUi.sendLedSyncToOutput();
     }
 
     window.api.appendShowLog(
@@ -398,14 +648,23 @@
     }
 
     scheduleAutoFollow(cue);
-    renderCueList();
+    updateCueListSelection();
     renderMonitors();
+    if (isRetriggerSameCue) {
+      const localVid = getTopLivePreviewVideo();
+      if (localVid) {
+        try { localVid.currentTime = 0; } catch (_) {}
+        localVid.play().catch(() => {});
+      }
+      syncLivePreviewVideoAudio();
+    }
     renderEditor();
 
     const nextCue = getSelectedCue();
     if (nextCue && nextCue.id !== cue.id) {
       preloadCue(nextCue);
     }
+    pushStageUpdate(true);
     syncRemoteState();
   }
 
@@ -415,33 +674,172 @@
     triggerCueAt(idx, true);
   }
 
+  function triggerSelectedWithTransition(tr, dur) {
+    if (state.project.cues.length === 0) return;
+    const idx = state.selectedIndex >= 0 ? state.selectedIndex : 0;
+    const cue = state.project.cues[idx];
+    const effDur = dur !== undefined ? dur : Math.max(0.5, Number(cue && cue.dur) || 0.8);
+    triggerCueAt(idx, true, { overrideTr: tr, overrideDur: effDur });
+  }
+
+  function handleTbarInput(rawVal0to100) {
+    const val = logic.clamp(rawVal0to100, 0, 100);
+    const slider = $('tbar-slider');
+    const pct = $('tbar-pct');
+    if (slider) slider.value = String(Math.round(val));
+    if (pct) pct.textContent = `${Math.round(val)}%`;
+
+    const nextCue = getSelectedCue();
+    if (!nextCue) return;
+
+    if (val >= 99.5) {
+      if (state.isCommittingTbar) return;
+      state.isCommittingTbar = true;
+      const idx = state.selectedIndex >= 0 ? state.selectedIndex : 0;
+      triggerCueAt(idx, true, { overrideTr: 'cut', overrideDur: 0 });
+      if (slider) slider.value = '0';
+      if (pct) pct.textContent = '0%';
+      setTimeout(() => { state.isCommittingTbar = false; }, 120);
+      return;
+    }
+
+    const { visUrl, visKind } = resolveCueVisualInfo(nextCue);
+    const tr = nextCue.tr === 'cut' ? 'fade' : (nextCue.tr || 'fade');
+    if (!state.rehearsalMode) {
+      window.api.sendToLed({
+        type: 'tbar',
+        progress: val / 100,
+        previewCue: JSON.parse(JSON.stringify(nextCue)),
+        previewUrl: visUrl,
+        previewKind: visKind,
+        tr
+      });
+    }
+  }
+
+  function renderMonitorHeadersOnly() {
+    const liveCue = getLiveCue();
+    const nextCue = getSelectedCue();
+
+    $('live-cue-title').textContent = liveCue ? liveCue.name : 'Chưa phát';
+    $('next-cue-title').textContent = nextCue ? nextCue.name : 'Chưa chọn';
+    $('go-next-hint').textContent = nextCue
+      ? `Phím Space — Chạy Cue ${state.selectedIndex + 1}: ${nextCue.name}`
+      : 'Phím Space — Chưa có Cue';
+
+    let followTxt = '';
+    if (nextCue && nextCue.autoFollow === 'time') followTxt = `Tự chuyển sau ${nextCue.autoDelay}s`;
+    else if (nextCue && nextCue.autoFollow === 'audio-end') followTxt = 'Tự chuyển khi hết nhạc';
+    $('auto-follow-badge').textContent = followTxt;
+  }
+
+  function showLightweightKeyboardNextPreview(selCue) {
+    const nextBox = $('next-preview-box');
+    if (!nextBox) return;
+    if (!selCue) {
+      renderPreviewBox(nextBox, null, 'Chọn một Cue bên trái', true, false);
+      return;
+    }
+    const srcType = selCue.sourceType || 'media';
+    if (srcType === 'media' && selCue.vis && logic.detectMediaKind(selCue.vis) === 'video') {
+      const cacheKey = `${selCue.vis}|${state.projectFilePath || ''}`;
+      const cachedThumb = thumbImageCache.get(cacheKey);
+      nextBox._renderedKey = '';
+      const layer = document.createElement('div');
+      layer.className = 'preview-layer';
+      if (cachedThumb) {
+        const bg = document.createElement('img');
+        bg.className = 'preview-backdrop';
+        bg.src = cachedThumb;
+        const img = document.createElement('img');
+        img.className = 'preview-fg';
+        img.src = cachedThumb;
+        img.style.objectFit = selCue.fit === 'cover' ? 'cover' : 'contain';
+        layer.appendChild(bg);
+        layer.appendChild(img);
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'preview-empty';
+        empty.textContent = `🎬 ${window.api.baseName(selCue.vis)}`;
+        layer.appendChild(empty);
+      }
+      const oldLayers = Array.from(nextBox.querySelectorAll('.preview-layer'));
+      oldLayers.forEach((old) => {
+        const oldVid = old.querySelector('video');
+        if (oldVid) {
+          try { oldVid.pause(); oldVid.removeAttribute('src'); } catch (_) {}
+          setTimeout(() => { try { oldVid.load(); } catch (_) {} }, 0);
+        }
+      });
+      nextBox.innerHTML = '';
+      nextBox.appendChild(layer);
+      return;
+    }
+    renderPreviewBox(nextBox, selCue, 'Chọn một Cue bên trái', true, false);
+  }
+
   function handleSelectDelta(delta) {
     const len = state.project.cues.length;
     if (len === 0) return;
     const cur = state.selectedIndex >= 0 ? state.selectedIndex : 0;
-    state.selectedIndex = logic.clamp(cur + delta, 0, len - 1);
-    onSelectionChanged();
+    const nextIdx = logic.clamp(cur + delta, 0, len - 1);
+    if (nextIdx === state.selectedIndex) return;
+    state.selectedIndex = nextIdx;
+    onSelectionChanged({ fromKeyboard: true });
   }
 
-  function onSelectionChanged() {
-    renderCueList();
-    renderMonitors();
-    renderEditor();
-    const sel = getSelectedCue();
-    if (sel) preloadCue(sel);
-    syncRemoteState();
+  function onSelectionChanged(opts) {
+    const isKeyboard = Boolean(opts && opts.fromKeyboard);
+    const isSelectionOnly = isKeyboard || Boolean(opts && opts.selectionOnly);
 
-    const activeRow = $('cue-list').querySelector('.cue-card.is-selected');
-    if (activeRow) activeRow.scrollIntoView({ block: 'nearest' });
+    if (isSelectionOnly) {
+      updateCueListSelection();
+    } else {
+      renderCueList();
+      const listEl = $('cue-list');
+      const activeRow = listEl ? listEl.querySelector('.cue-card.is-selected') : null;
+      if (activeRow) activeRow.scrollIntoView({ block: 'nearest' });
+    }
+    renderMonitorHeadersOnly();
+
+    clearTimeout(selectionCommitTimer);
+    clearTimeout(preloadDebounceTimer);
+
+    const commitSelectionHeavy = () => {
+      renderMonitors();
+      renderEditor();
+      pushStageUpdate(true);
+      syncRemoteState();
+      preloadDebounceTimer = setTimeout(() => {
+        const sel = getSelectedCue();
+        if (sel) preloadCue(sel);
+      }, 90);
+    };
+
+    if (isKeyboard) {
+      showLightweightKeyboardNextPreview(getSelectedCue());
+      selectionCommitTimer = setTimeout(commitSelectionHeavy, 110);
+    } else {
+      renderMonitors();
+      renderEditor();
+      preloadDebounceTimer = setTimeout(() => {
+        const sel = getSelectedCue();
+        if (sel) preloadCue(sel);
+        pushStageUpdate(true);
+        syncRemoteState();
+      }, 80);
+    }
   }
 
-  function toggleBlackout() {
-    state.blackout = !state.blackout;
+  function toggleBlackout(explicitState) {
+    state.blackout = explicitState !== undefined ? Boolean(explicitState) : !state.blackout;
     $('btn-blackout').classList.toggle('active', state.blackout);
+    if ($('btn-sw-ftb')) $('btn-sw-ftb').classList.toggle('active', state.blackout);
     if (!state.rehearsalMode) {
       window.api.sendToLed({ type: 'blackout', on: state.blackout });
     }
     window.api.appendShowLog(state.blackout ? 'PANIC: ĐEN MÀN (Bật)' : 'PANIC: ĐEN MÀN (Tắt)');
+    pushStageUpdate(true);
     syncRemoteState();
   }
 
@@ -450,8 +848,11 @@
     if (!state.rehearsalMode) {
       window.api.sendToLed({ type: 'fade-video-audio', durationSec: 2.0 });
     }
-    const localVid = $('live-preview-box') && $('live-preview-box').querySelector('video');
-    if (localVid) localVid.muted = true;
+    const localVid = getTopLivePreviewVideo();
+    if (localVid) {
+      audioEngine.syncLiveVideoElement(localVid, false, 0, false, 0);
+      localVid.muted = true;
+    }
     window.api.appendShowLog('PANIC: TẮT NHẠC DẦN (2s)');
   }
 
@@ -461,16 +862,33 @@
     state.activeTrackPeaks = null;
     state.blackout = false;
     $('btn-blackout').classList.remove('active');
+    if ($('btn-sw-ftb')) $('btn-sw-ftb').classList.remove('active');
+    if ($('tbar-slider')) $('tbar-slider').value = '0';
+    if ($('tbar-pct')) $('tbar-pct').textContent = '0%';
+
+    if (ledDmxUi) ledDmxUi.releaseAllMomentary();
+    if (vjDeckUi) {
+      const deckState = vjDeckUi.getDeckState();
+      deckState.layers.forEach((l) => { l.activeClipId = null; });
+      vjDeckUi.render();
+    }
+
     if (!state.rehearsalMode) {
       window.api.sendToLed({ type: 'clear' });
     }
     state.liveCueId = null;
     state.liveCueSnapshot = null;
     state.liveStartedAtMs = 0;
+    state.ledVideoTelemetry.playing = false;
+    state.ledVideoTelemetry.env = 0;
+    state.localVideoEnv = 0;
+    previewBeatPhys.active = false;
+    syncAnalysisSourceRouting();
     window.api.setShowRunningState(false);
-    renderCueList();
+    updateCueListSelection();
     renderMonitors();
     window.api.appendShowLog('PANIC: DỪNG TẤT CẢ (Esc)');
+    pushStageUpdate(true);
     syncRemoteState();
   }
 
@@ -478,16 +896,6 @@
     state.testPattern = !state.testPattern;
     $('btn-test-pattern').classList.toggle('active', state.testPattern);
     window.api.sendToLed({ type: 'test-pattern', on: state.testPattern });
-  }
-
-  function syncRemoteState() {
-    const live = getLiveCue();
-    const next = getSelectedCue();
-    window.api.broadcastRemoteState({
-      liveName: live ? live.name : 'Chưa phát',
-      nextName: next ? next.name : 'Trống',
-      blackout: state.blackout
-    });
   }
 
   // =========================================================================
@@ -519,14 +927,19 @@
   }
 
   function isUntouchedBlankCue(cue) {
-    return Boolean(cue && !cue.vis && !cue.aud && (!cue.note || !cue.note.trim()));
+    return Boolean(
+      cue &&
+      (!cue.sourceType || cue.sourceType === 'media') &&
+      !cue.vis &&
+      !cue.aud &&
+      (!cue.note || !cue.note.trim())
+    );
   }
 
   function isGenericCueName(name) {
     return !name || /^Cue(\s+\d+|\s+mới|\s+chưa\s+đặt\s+tên)?$/i.test(name.trim());
   }
 
-  /** Nhập mảng đường dẫn Ảnh / Video / Nhạc thành các Cue trong Danh sách Cue */
   async function importMediaFilesIntoCueList(filePaths, opts) {
     const options = opts || {};
     if (state.showMode) {
@@ -550,7 +963,6 @@
     const targetIdx = typeof options.targetCueIndex === 'number' ? options.targetCueIndex : -1;
     const targetCue = targetIdx >= 0 ? state.project.cues[targetIdx] : null;
 
-    // Nếu người dùng thả trực tiếp vào 1 Cue trống chưa có hình/nhạc -> điền thẳng vào Cue trống đó
     if (targetCue && isUntouchedBlankCue(targetCue)) {
       if (
         builtCues.length === 2 &&
@@ -558,6 +970,7 @@
       ) {
         const visCue = builtCues[0].vis ? builtCues[0] : builtCues[1];
         const audCue = builtCues[0].aud ? builtCues[0] : builtCues[1];
+        targetCue.sourceType = 'media';
         targetCue.vis = visCue.vis;
         targetCue.vsound = visCue.vsound;
         targetCue.vvol = visCue.vvol;
@@ -567,6 +980,7 @@
       } else {
         const first = builtCues[0];
         if (first.vis) {
+          targetCue.sourceType = 'media';
           targetCue.vis = first.vis;
           targetCue.vsound = first.vsound;
           targetCue.vvol = first.vvol;
@@ -583,7 +997,6 @@
         firstSelectedIdx = targetIdx;
       }
     } else if (state.project.cues.length === 1 && isUntouchedBlankCue(state.project.cues[0])) {
-      // Nếu cả dự án đang chỉ có đúng 1 Cue trống mặc định -> thay thế luôn để không dư Cue rỗng
       state.project.cues.splice(0, 1, ...builtCues);
       firstSelectedIdx = 0;
     } else {
@@ -632,6 +1045,9 @@
     document.querySelectorAll('.tab-pane').forEach((p) => {
       p.classList.toggle('active', p.id === tabId);
     });
+    if (tabId === 'tab-audio') {
+      renderWaveformForCue(getSelectedCue());
+    }
   }
 
   async function assignVisualFileToSelectedCue(filePath, viaDrop) {
@@ -653,6 +1069,7 @@
     pushUndoSnapshot();
     const cue = ensureEditableSelectedCue(filePath);
     const wasBlank = !cue.vis && !cue.aud;
+    cue.sourceType = 'media';
     cue.vis = filePath;
     if (kind === 'video') {
       cue.vsound = true;
@@ -715,11 +1132,24 @@
   // =========================================================================
 
   function renderThumbContent(box, visPath) {
-    box.innerHTML = '';
+    const cacheKey = `${visPath}|${state.projectFilePath || ''}`;
+    const cachedDataUrl = thumbImageCache.get(cacheKey);
+    if (cachedDataUrl) {
+      box.innerHTML = '';
+      const img = document.createElement('img');
+      img.decoding = 'async';
+      img.src = cachedDataUrl;
+      box.appendChild(img);
+      return;
+    }
+
     const url = window.api.toFileUrl(visPath, state.projectFilePath);
     const kind = logic.detectMediaKind(visPath);
     if (kind === 'image') {
+      box.innerHTML = '';
       const img = document.createElement('img');
+      img.decoding = 'async';
+      img.loading = 'lazy';
       img.src = url;
       img.onerror = () => { box.textContent = '⚠'; };
       box.appendChild(img);
@@ -727,19 +1157,267 @@
       const v = document.createElement('video');
       v.preload = 'metadata';
       v.muted = true;
-      v.src = url;
-      v.onloadeddata = () => {
-        try { v.currentTime = Math.min(0.5, (v.duration || 1) * 0.2); } catch (_) {}
+      v.playsInline = true;
+      let captured = false;
+
+      const cleanupVideo = () => {
+        try {
+          v.onloadeddata = null;
+          v.onseeked = null;
+          v.onerror = null;
+          v.pause();
+          v.removeAttribute('src');
+          setTimeout(() => { try { v.load(); } catch (_) {} }, 0);
+        } catch (_) {}
       };
-      v.onerror = () => { box.textContent = '⚠'; };
-      box.appendChild(v);
+
+      v.onloadeddata = () => {
+        try {
+          const seekT = (v.duration && Number.isFinite(v.duration)) ? Math.min(0.5, v.duration * 0.2) : 0.1;
+          v.currentTime = seekT;
+        } catch (_) {
+          cleanupVideo();
+        }
+      };
+
+      v.onseeked = () => {
+        if (captured) return;
+        captured = true;
+        try {
+          if (v.videoWidth > 0 && v.videoHeight > 0) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 112;
+            canvas.height = 72;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              const scale = Math.max(112 / v.videoWidth, 72 / v.videoHeight);
+              const dw = v.videoWidth * scale;
+              const dh = v.videoHeight * scale;
+              ctx.drawImage(v, (112 - dw) / 2, (72 - dh) / 2, dw, dh);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+              if (thumbImageCache.size >= MAX_THUMB_CACHE) {
+                const oldestKey = thumbImageCache.keys().next().value;
+                thumbImageCache.delete(oldestKey);
+              }
+              thumbImageCache.set(cacheKey, dataUrl);
+              if (box.isConnected && box.dataset.vis === visPath) {
+                box.innerHTML = '';
+                const img = document.createElement('img');
+                img.decoding = 'async';
+                img.src = dataUrl;
+                box.appendChild(img);
+              }
+            }
+          }
+        } catch (_) {
+          // Bỏ qua nếu frame không đọc được
+        } finally {
+          cleanupVideo();
+        }
+      };
+
+      v.onerror = () => {
+        if (box.isConnected && box.dataset.vis === visPath) box.textContent = '⚠';
+        cleanupVideo();
+      };
+      v.src = url;
     } else {
+      box.innerHTML = '';
       box.textContent = '▣';
+    }
+  }
+
+  function applyCueSearchFilter() {
+    const input = $('cue-search-input');
+    const clearBtn = $('btn-cue-search-clear');
+    const listEl = $('cue-list');
+    if (!listEl) return;
+    const q = input ? input.value.trim().toLowerCase() : '';
+    if (clearBtn) clearBtn.classList.toggle('hidden', !q);
+    const cards = listEl.querySelectorAll('.cue-card');
+    for (let i = 0; i < cards.length; i++) {
+      const card = cards[i];
+      const matched = !q || (card.dataset.searchText || '').includes(q);
+      card.classList.toggle('is-filtered-out', !matched);
+    }
+  }
+
+  function setCueViewMode(mode) {
+    const isGrid = mode === 'grid';
+    const listEl = $('cue-list');
+    const btnList = $('btn-cue-view-list');
+    const btnGrid = $('btn-cue-view-grid');
+    if (listEl) listEl.classList.toggle('is-grid-view', isGrid);
+    if (btnList) btnList.classList.toggle('active', !isGrid);
+    if (btnGrid) btnGrid.classList.toggle('active', isGrid);
+    try {
+      localStorage.setItem('er_cue_view', isGrid ? 'grid' : 'list');
+    } catch (_) {}
+  }
+
+  function setDrawerCollapsed(collapsed) {
+    const drawer = $('fs-drawer');
+    const toggleBtn = $('btn-drawer-toggle');
+    if (!drawer) return;
+    drawer.classList.toggle('is-collapsed', Boolean(collapsed));
+    if (toggleBtn) {
+      toggleBtn.textContent = collapsed ? '▴ Mở rộng' : '▾ Thu gọn';
+    }
+    try {
+      localStorage.setItem('er_drawer_collapsed', collapsed ? '1' : '0');
+    } catch (_) {}
+  }
+
+  function activateDrawerTab(paneId, autoExpand = true) {
+    document.querySelectorAll('.drawer-tab-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.drawerTab === paneId);
+    });
+    document.querySelectorAll('.drawer-pane').forEach((p) => {
+      p.classList.toggle('active', p.id === paneId);
+    });
+    if (autoExpand) {
+      setDrawerCollapsed(false);
+    }
+    try {
+      localStorage.setItem('er_drawer_tab', paneId);
+    } catch (_) {}
+  }
+
+  function initFreeShowDrawerAndResizers() {
+    try {
+      const rootStyle = document.documentElement.style;
+      const savedLeft = Number(localStorage.getItem('er_fs_left_w'));
+      const savedRight = Number(localStorage.getItem('er_fs_right_w'));
+      const savedDrawerH = Number(localStorage.getItem('er_fs_drawer_h'));
+      if (Number.isFinite(savedLeft) && savedLeft >= 220 && savedLeft <= 520) {
+        rootStyle.setProperty('--fs-left-w', `${savedLeft}px`);
+      }
+      if (Number.isFinite(savedRight) && savedRight >= 270 && savedRight <= 520) {
+        rootStyle.setProperty('--fs-right-w', `${savedRight}px`);
+      }
+      if (Number.isFinite(savedDrawerH) && savedDrawerH >= 130 && savedDrawerH <= 440) {
+        rootStyle.setProperty('--fs-drawer-h', `${savedDrawerH}px`);
+      }
+      if (localStorage.getItem('er_cue_view') === 'grid') {
+        setCueViewMode('grid');
+      }
+      const savedTab = localStorage.getItem('er_drawer_tab');
+      if (savedTab && $(savedTab)) {
+        activateDrawerTab(savedTab, false);
+      }
+      if (localStorage.getItem('er_drawer_collapsed') === '1') {
+        setDrawerCollapsed(true);
+      }
+    } catch (_) {}
+
+    const btnList = $('btn-cue-view-list');
+    const btnGrid = $('btn-cue-view-grid');
+    if (btnList) btnList.addEventListener('click', () => setCueViewMode('list'));
+    if (btnGrid) btnGrid.addEventListener('click', () => setCueViewMode('grid'));
+
+    const searchInput = $('cue-search-input');
+    const searchClear = $('btn-cue-search-clear');
+    if (searchInput) searchInput.addEventListener('input', applyCueSearchFilter);
+    if (searchClear) {
+      searchClear.addEventListener('click', () => {
+        if (searchInput) searchInput.value = '';
+        applyCueSearchFilter();
+      });
+    }
+
+    document.querySelectorAll('.drawer-tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activateDrawerTab(btn.dataset.drawerTab, true);
+      });
+    });
+
+    const drawerToggle = $('btn-drawer-toggle');
+    if (drawerToggle) {
+      drawerToggle.addEventListener('click', () => {
+        const drawer = $('fs-drawer');
+        if (drawer) setDrawerCollapsed(!drawer.classList.contains('is-collapsed'));
+      });
+    }
+
+    document.querySelectorAll('.fs-col-resizer').forEach((resizer) => {
+      resizer.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        const side = resizer.dataset.resize;
+        const startX = ev.clientX;
+        const leftEl = $('cue-panel');
+        const rightEl = $('editor-panel');
+        const startWidth = side === 'left'
+          ? (leftEl ? leftEl.getBoundingClientRect().width : 280)
+          : (rightEl ? rightEl.getBoundingClientRect().width : 335);
+
+        resizer.classList.add('is-resizing');
+        let lastVal = Math.round(startWidth);
+
+        const onMove = (moveEv) => {
+          const dx = moveEv.clientX - startX;
+          if (side === 'left') {
+            lastVal = Math.round(logic.clamp(startWidth + dx, 220, 520));
+            document.documentElement.style.setProperty('--fs-left-w', `${lastVal}px`);
+          } else {
+            lastVal = Math.round(logic.clamp(startWidth - dx, 270, 520));
+            document.documentElement.style.setProperty('--fs-right-w', `${lastVal}px`);
+          }
+        };
+
+        const onUp = () => {
+          resizer.classList.remove('is-resizing');
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          try {
+            localStorage.setItem(side === 'left' ? 'er_fs_left_w' : 'er_fs_right_w', String(lastVal));
+          } catch (_) {}
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
+    });
+
+    const drawerResizer = $('fs-drawer-resizer');
+    if (drawerResizer) {
+      drawerResizer.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        const drawer = $('fs-drawer');
+        const body = $('fs-drawer-body');
+        const wasCollapsed = drawer && drawer.classList.contains('is-collapsed');
+        const startY = ev.clientY;
+        const startH = wasCollapsed ? 180 : (body ? body.getBoundingClientRect().height : 205);
+        drawerResizer.classList.add('is-resizing');
+        let lastH = Math.round(startH);
+
+        const onMove = (moveEv) => {
+          const dy = startY - moveEv.clientY;
+          const nextH = logic.clamp(startH + dy, 130, 440);
+          lastH = Math.round(nextH);
+          if (drawer && drawer.classList.contains('is-collapsed') && dy > 16) {
+            setDrawerCollapsed(false);
+          }
+          document.documentElement.style.setProperty('--fs-drawer-h', `${lastH}px`);
+        };
+
+        const onUp = () => {
+          drawerResizer.classList.remove('is-resizing');
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          try {
+            localStorage.setItem('er_fs_drawer_h', String(lastH));
+          } catch (_) {}
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
     }
   }
 
   function renderCueList() {
     const listEl = $('cue-list');
+    thumbObserver.disconnect();
     listEl.innerHTML = '';
     const cues = state.project.cues;
     $('cue-count-label').textContent = `${cues.length} Cue`;
@@ -753,17 +1431,59 @@
       const isLive = cue.id === state.liveCueId;
       const isSelected = idx === state.selectedIndex;
 
+      let cueType = 'empty';
+      let typeLabel = 'CUE';
+      if (cue.sourceType === 'camera') {
+        cueType = 'camera';
+        typeLabel = 'CAM';
+      } else if (cue.sourceType === 'generator') {
+        cueType = 'generator';
+        typeLabel = 'VJ';
+      } else if (cue.vis) {
+        const visKind = logic.detectMediaKind(cue.vis);
+        cueType = visKind === 'image' ? 'image' : 'video';
+        typeLabel = visKind === 'image' ? 'ẢNH' : 'VIDEO';
+      } else if (cue.aud) {
+        cueType = 'audio';
+        typeLabel = 'NHẠC';
+      }
+
       const card = document.createElement('div');
       card.className = 'cue-card' + (isLive ? ' is-live' : '') + (isSelected ? ' is-selected' : '');
+      card.dataset.cueIndex = String(idx);
+      card.dataset.cueId = cue.id;
+      card.dataset.cueType = cueType;
+      card.dataset.searchText = [
+        cue.name || '',
+        cue.vis ? window.api.baseName(cue.vis) : '',
+        cue.aud ? window.api.baseName(cue.aud) : '',
+        cue.note || '',
+        typeLabel
+      ].join(' ').toLowerCase();
       card.draggable = !state.showMode;
       card.title = 'Click đơn để chọn KẾ TIẾP • Nháy đúp để phát ngay Cue này';
+
+      const typeBar = document.createElement('div');
+      typeBar.className = 'cue-type-bar';
+      const typeLeft = document.createElement('span');
+      typeLeft.textContent = `#${idx + 1} · ${typeLabel}`;
+      const typeRight = document.createElement('span');
+      typeRight.className = 'cue-type-tr';
+      typeRight.textContent = cue.tr || 'fade';
+      typeBar.appendChild(typeLeft);
+      typeBar.appendChild(typeRight);
+      card.appendChild(typeBar);
 
       const mainRow = document.createElement('div');
       mainRow.className = 'cue-card-main';
 
       const thumbEl = document.createElement('div');
       thumbEl.className = 'cue-thumb';
-      if (cue.vis) {
+      if (cue.sourceType === 'camera') {
+        thumbEl.textContent = 'CAM';
+      } else if (cue.sourceType === 'generator') {
+        thumbEl.textContent = 'GEN';
+      } else if (cue.vis) {
         thumbEl.dataset.vis = cue.vis;
         thumbEl.textContent = '...';
         thumbObserver.observe(thumbEl);
@@ -801,13 +1521,18 @@
       const parts = [];
       if (cue.aud) parts.push(window.api.baseName(cue.aud));
       else if (cue.keepAudio) parts.push('Giữ nhạc cũ');
-      if (cue.vis) parts.push(window.api.baseName(cue.vis));
+      if (cue.sourceType === 'camera') parts.push('Camera Live');
+      else if (cue.sourceType === 'generator') parts.push(`VJ: ${cue.generator || 'laser-beams'}`);
+      else if (cue.vis) parts.push(window.api.baseName(cue.vis));
       if (cue.fx && (cue.fx.on || cue.fx.idleOn)) parts.push('FX');
+      if (cue.ledSync && cue.ledSync.on) parts.push('LED');
       subRow.textContent = parts.length > 0 ? parts.join(' • ') : 'Trống';
 
       const missingAud = cue.aud && state.fileExistsMap[cue.aud] === false;
-      const missingVis = cue.vis && state.fileExistsMap[cue.vis] === false;
-      const codecErr = (cue.vis && state.codecErrorMap[cue.vis]) || (cue.aud && state.codecErrorMap[cue.aud]);
+      const missingVis = (!cue.sourceType || cue.sourceType === 'media') && cue.vis && state.fileExistsMap[cue.vis] === false;
+      const visCodecErr = Boolean(cue.vis && state.codecErrorMap[cue.vis]);
+      const audCodecErr = Boolean(cue.aud && state.codecErrorMap[cue.aud]);
+      const codecErr = visCodecErr || audCodecErr;
 
       infoEl.appendChild(topRow);
       infoEl.appendChild(subRow);
@@ -815,7 +1540,7 @@
       if (missingAud || missingVis || codecErr) {
         const warn = document.createElement('div');
         warn.className = 'cue-warn';
-        const isImgErr = codecErr && cue.vis && logic.detectMediaKind(cue.vis) === 'image';
+        const isImgErr = visCodecErr && logic.detectMediaKind(cue.vis) === 'image';
         warn.textContent = (missingAud || missingVis)
           ? '⚠ Mất tệp nguồn'
           : (isImgErr ? '⚠ Không đọc được tệp ảnh' : '⚠ Lỗi codec (cần MP4 H.264)');
@@ -831,7 +1556,6 @@
       mainRow.appendChild(infoEl);
       card.appendChild(mainRow);
 
-      // Thanh sóng âm tiến trình bên dưới thẻ có nhạc
       if (cue.aud) {
         const strip = document.createElement('div');
         strip.className = 'cue-audio-strip';
@@ -849,17 +1573,16 @@
         card.appendChild(strip);
       }
 
-      // Click đơn = chọn KẾ TIẾP; Nháy đúp = phát ngay Cue đó
       card.addEventListener('click', () => {
+        if (state.selectedIndex === idx) return;
         state.selectedIndex = idx;
-        onSelectionChanged();
+        onSelectionChanged({ selectionOnly: true });
       });
 
       card.addEventListener('dblclick', () => {
         triggerCueAt(idx, true);
       });
 
-      // Kéo thả sắp xếp thứ tự Cue hoặc nhận tệp kéo thả từ máy tính
       card.addEventListener('dragstart', (e) => {
         if (state.showMode) { e.preventDefault(); return; }
         dragSrcIndex = idx;
@@ -915,7 +1638,6 @@
       listEl.appendChild(card);
     });
 
-    // Ô nhận kéo thả căn giữa vùng Danh sách Cue (chỉ hiển thị chữ "Kéo thả file")
     if (!state.showMode) {
       const dzCard = document.createElement('div');
       dzCard.className = 'cue-dropzone-card';
@@ -948,35 +1670,266 @@
       });
       listEl.appendChild(dzCard);
     }
+
+    applyCueSearchFilter();
+  }
+
+  function updateCueListSelection() {
+    const listEl = $('cue-list');
+    if (!listEl) return;
+    const cards = listEl.querySelectorAll('.cue-card');
+    if (cards.length !== state.project.cues.length) {
+      renderCueList();
+      const row = listEl.querySelector('.cue-card.is-selected');
+      if (row) row.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+
+    let selectedCard = null;
+    for (let i = 0; i < cards.length; i++) {
+      const card = cards[i];
+      const cueId = card.dataset.cueId;
+      const isLive = cueId === state.liveCueId;
+      const isSelected = i === state.selectedIndex;
+
+      card.classList.toggle('is-live', isLive);
+      card.classList.toggle('is-selected', isSelected);
+      if (isSelected) selectedCard = card;
+
+      const topRow = card.querySelector('.cue-card-top');
+      if (topRow) {
+        const desired = isLive ? 'live' : (isSelected ? 'next' : 'none');
+        const existingBadge = topRow.querySelector('.cue-badge');
+        const current = existingBadge
+          ? (existingBadge.classList.contains('cue-badge-live') ? 'live' : 'next')
+          : 'none';
+        if (current !== desired) {
+          if (existingBadge) existingBadge.remove();
+          if (desired === 'live') {
+            const badge = document.createElement('span');
+            badge.className = 'cue-badge cue-badge-live';
+            badge.textContent = 'LIVE';
+            topRow.appendChild(badge);
+          } else if (desired === 'next') {
+            const badge = document.createElement('span');
+            badge.className = 'cue-badge cue-badge-next';
+            badge.textContent = 'KẾ TIẾP';
+            topRow.appendChild(badge);
+          }
+        }
+      }
+    }
+
+    if (selectedCard && !selectedCard.classList.contains('is-filtered-out')) {
+      const listRect = listEl.getBoundingClientRect();
+      const cardRect = selectedCard.getBoundingClientRect();
+      if (cardRect.top < listRect.top) {
+        listEl.scrollTop -= (listRect.top - cardRect.top + 6);
+      } else if (cardRect.bottom > listRect.bottom) {
+        listEl.scrollTop += (cardRect.bottom - listRect.bottom + 6);
+      }
+    }
   }
 
   // =========================================================================
   // RENDER MÀN HÌNH XEM TRƯỚC & THUỘC TÍNH CUE
   // =========================================================================
 
-  /** Đồng bộ tiếng gốc video ở khung xem trước LIVE (chỉ bật tiếng local khi đóng LED hoặc Tập dượt để không bị vọng đôi) */
-  function syncLivePreviewVideoAudio() {
+  function getTopLivePreviewLayer() {
     const liveBox = $('live-preview-box');
-    if (!liveBox) return;
-    const v = liveBox.querySelector('video');
+    if (!liveBox) return null;
+    const layers = liveBox.querySelectorAll('.preview-layer');
+    return layers.length > 0 ? layers[layers.length - 1] : null;
+  }
+
+  function getTopLivePreviewVideo() {
+    const topLayer = getTopLivePreviewLayer();
+    return topLayer ? topLayer.querySelector('video') : null;
+  }
+
+  function stepPreviewSpring1D(pos, vel, omega, zeta, dt) {
+    const acc = -omega * omega * pos - 2 * zeta * omega * vel;
+    const nextVel = vel + acc * dt;
+    const nextPos = pos + nextVel * dt;
+    return [nextPos, nextVel];
+  }
+
+  function triggerPreviewBeatFx(k, fxOverride) {
+    const fx = fxOverride ? logic.createDefaultFx(fxOverride) : null;
+    if (!fx || !fx.on) return;
+
+    const now = performance.now();
+    const strength = logic.clamp(k ?? 0.8, 0.2, 1);
+    previewBeatPhys.lastBeatAngle = logic.pickNextBeatAngle(previewBeatPhys.lastBeatAngle);
+    previewBeatPhys.rotSign = -previewBeatPhys.rotSign;
+
+    const elapsedSincePrev = previewBeatPhys.lastBeatTimeMs > 0 ? (now - previewBeatPhys.lastBeatTimeMs) : Infinity;
+    previewBeatPhys.lastBeatTimeMs = now;
+    const effDecayMs = logic.calculateEffectiveDecay(fx.decay, elapsedSincePrev);
+    const decaySec = Math.max(0.09, effDecayMs / 1000);
+
+    const motion = fx.motion || (fx.step ? 'step' : 'smooth');
+    previewBeatPhys.motion = motion;
+    previewBeatPhys.shakeUnit = (fx.shake || 8) * 0.35;
+
+    if (motion === 'spring') {
+      previewBeatPhys.zeta = 0.52;
+      previewBeatPhys.omega = logic.clamp(5.4 / decaySec, 14, 52);
+    } else {
+      previewBeatPhys.zeta = 1.04;
+      previewBeatPhys.omega = logic.clamp(4.4 / decaySec, 12, 46);
+    }
+
+    const velGain = previewBeatPhys.omega * (motion === 'spring' ? 1.92 : Math.E);
+    const shakePx = (fx.shake || 0) * 0.35;
+    const peakX = Math.cos(previewBeatPhys.lastBeatAngle) * shakePx * strength;
+    const peakY = Math.sin(previewBeatPhys.lastBeatAngle) * shakePx * strength;
+    const peakRot = previewBeatPhys.rotSign * (fx.rot || 0) * strength;
+    const peakScale = ((fx.scale || 0) / 100) * strength;
+    const peakBright = ((fx.bright || 0) / 100) * strength;
+    const peakHue = previewBeatPhys.rotSign * (fx.hue || 0) * strength;
+    const peakFlash = ((fx.flash || 0) / 100) * strength;
+
+    previewBeatPhys.vx = previewBeatPhys.vx * 0.2 + (peakX - previewBeatPhys.x * 0.55) * velGain;
+    previewBeatPhys.vy = previewBeatPhys.vy * 0.2 + (peakY - previewBeatPhys.y * 0.55) * velGain;
+    previewBeatPhys.vRot = previewBeatPhys.vRot * 0.2 + (peakRot - previewBeatPhys.rot * 0.55) * velGain;
+    previewBeatPhys.vScale = Math.max(0, previewBeatPhys.vScale * 0.25) + Math.max(0, peakScale - previewBeatPhys.scale * 0.5) * velGain;
+
+    const lightGain = previewBeatPhys.omega * 1.25 * Math.E;
+    previewBeatPhys.vBright = Math.max(0, peakBright - previewBeatPhys.bright * 0.5) * lightGain;
+    previewBeatPhys.vHue = (peakHue - previewBeatPhys.hue * 0.5) * lightGain;
+    if ((fx.flash || 0) > 0) {
+      previewBeatPhys.vFlash = Math.max(0, peakFlash - previewBeatPhys.flash * 0.4) * lightGain * 1.15;
+    }
+
+    const maxShake = Math.max(3, shakePx * 1.18);
+    previewBeatPhys.x = logic.clamp(previewBeatPhys.x, -maxShake, maxShake);
+    previewBeatPhys.y = logic.clamp(previewBeatPhys.y, -maxShake, maxShake);
+    previewBeatPhys.active = true;
+  }
+
+  function stepPreviewBeatFx(dtSec) {
+    if (!previewBeatPhys.active) return;
+    const liveBox = $('live-preview-box');
+    const topLayer = getTopLivePreviewLayer();
+    const targetEl = topLayer ? (topLayer.querySelector('.preview-fg') || topLayer.querySelector('.preview-virtual-card')) : null;
+    if (!liveBox || !targetEl) {
+      previewBeatPhys.active = false;
+      return;
+    }
+
+    const subSteps = Math.max(1, Math.min(8, Math.ceil(dtSec / 0.004)));
+    const subDt = dtSec / subSteps;
+    const omega = previewBeatPhys.omega;
+    const zeta = previewBeatPhys.zeta;
+    const lightOmega = omega * 1.25;
+
+    for (let s = 0; s < subSteps; s++) {
+      [previewBeatPhys.x, previewBeatPhys.vx] = stepPreviewSpring1D(previewBeatPhys.x, previewBeatPhys.vx, omega, zeta, subDt);
+      [previewBeatPhys.y, previewBeatPhys.vy] = stepPreviewSpring1D(previewBeatPhys.y, previewBeatPhys.vy, omega, zeta, subDt);
+      [previewBeatPhys.rot, previewBeatPhys.vRot] = stepPreviewSpring1D(previewBeatPhys.rot, previewBeatPhys.vRot, omega, zeta, subDt);
+      [previewBeatPhys.scale, previewBeatPhys.vScale] = stepPreviewSpring1D(previewBeatPhys.scale, previewBeatPhys.vScale, omega, zeta, subDt);
+      [previewBeatPhys.bright, previewBeatPhys.vBright] = stepPreviewSpring1D(previewBeatPhys.bright, previewBeatPhys.vBright, lightOmega, 1.08, subDt);
+      [previewBeatPhys.hue, previewBeatPhys.vHue] = stepPreviewSpring1D(previewBeatPhys.hue, previewBeatPhys.vHue, lightOmega, 1.08, subDt);
+      [previewBeatPhys.flash, previewBeatPhys.vFlash] = stepPreviewSpring1D(previewBeatPhys.flash, previewBeatPhys.vFlash, lightOmega * 1.15, 1.12, subDt);
+    }
+
+    const isResting =
+      Math.abs(previewBeatPhys.x) < 0.03 &&
+      Math.abs(previewBeatPhys.y) < 0.03 &&
+      Math.abs(previewBeatPhys.rot) < 0.008 &&
+      Math.abs(previewBeatPhys.scale) < 0.0004 &&
+      Math.abs(previewBeatPhys.bright) < 0.004 &&
+      Math.abs(previewBeatPhys.hue) < 0.3 &&
+      Math.abs(previewBeatPhys.flash) < 0.004;
+
+    let flashEl = liveBox.querySelector('.preview-beat-flash');
+    if (isResting) {
+      targetEl.style.transform = '';
+      targetEl.style.filter = '';
+      if (flashEl) flashEl.style.opacity = '0';
+      previewBeatPhys.active = false;
+      return;
+    }
+
+    let drawX = previewBeatPhys.x;
+    let drawY = previewBeatPhys.y;
+    const drawRot = previewBeatPhys.rot;
+    let drawScale = 1 + Math.max(-0.15, previewBeatPhys.scale);
+
+    if (previewBeatPhys.motion === 'step') {
+      const q = (val, unit) => (unit > 0 ? Math.round(val / unit) * unit : val);
+      drawX = q(drawX, Math.max(1, previewBeatPhys.shakeUnit * 0.22));
+      drawY = q(drawY, Math.max(1, previewBeatPhys.shakeUnit * 0.22));
+      drawScale = 1 + q(previewBeatPhys.scale, 0.015);
+    }
+
+    targetEl.style.transform =
+      `translate3d(${drawX.toFixed(2)}px, ${drawY.toFixed(2)}px, 0) ` +
+      `rotate(${drawRot.toFixed(2)}deg) scale(${drawScale.toFixed(4)})`;
+
+    const filters = [];
+    if (Math.abs(previewBeatPhys.bright) > 0.005) {
+      filters.push(`brightness(${Math.max(0.5, 1 + previewBeatPhys.bright).toFixed(3)})`);
+    }
+    if (Math.abs(previewBeatPhys.hue) > 0.5) {
+      filters.push(`hue-rotate(${previewBeatPhys.hue.toFixed(1)}deg)`);
+    }
+    targetEl.style.filter = filters.length > 0 ? filters.join(' ') : '';
+
+    if (previewBeatPhys.flash > 0.005) {
+      if (!flashEl) {
+        flashEl = document.createElement('div');
+        flashEl.className = 'preview-beat-flash';
+        liveBox.appendChild(flashEl);
+      }
+      flashEl.style.opacity = logic.clamp(previewBeatPhys.flash, 0, 0.85).toFixed(3);
+    } else if (flashEl) {
+      flashEl.style.opacity = '0';
+    }
+  }
+
+  function syncLivePreviewVideoAudio() {
+    const v = getTopLivePreviewVideo();
     if (!v) return;
     const liveCue = getLiveCue();
     if (!liveCue) {
+      audioEngine.syncLiveVideoElement(v, false, 0, false, 0);
       v.muted = true;
       return;
     }
-    const shouldPlayLocalAudio =
-      (state.rehearsalMode || !state.ledStatus.isOpen) && Boolean(liveCue.vsound !== false);
+    const useLocalAudio = state.rehearsalMode || !state.ledStatus.isOpen;
+    const hasVsound = liveCue.vsound !== false;
+    const cueVol = hasVsound ? logic.clamp((liveCue.vvol ?? 100) / 100, 0, 1) : 0;
     const rehearsalFactor = state.rehearsalMode ? 0.35 : 1.0;
-    const vol = logic.clamp(
-      ((liveCue.vvol ?? 100) / 100) * (Number($('master-vol').value) / 100) * rehearsalFactor,
-      0,
-      1
+    const outVol = logic.clamp((Number($('master-vol').value) / 100) * rehearsalFactor, 0, 1);
+    const shouldPlayLocalAudio = useLocalAudio && cueVol > 0.001 && outVol > 0.001;
+    const wantsLocalVideoAnalysis = Boolean(liveCue.fx && liveCue.fx.src === 'video');
+    const handledByAudioEngine = audioEngine.syncLiveVideoElement(
+      v,
+      shouldPlayLocalAudio,
+      cueVol,
+      useLocalAudio && wantsLocalVideoAnalysis && cueVol > 0.001,
+      outVol
     );
-    v.volume = vol;
-    v.muted = !shouldPlayLocalAudio || vol <= 0.001;
-    if (typeof v.setSinkId === 'function' && state.settings.audioDeviceId !== undefined) {
-      v.setSinkId(state.settings.audioDeviceId || '').catch(() => {});
+    if (handledByAudioEngine) {
+      if (!v.muted && v.paused && !v.ended) {
+        v.play().catch(() => {});
+      }
+      return;
+    }
+
+    const effVol = cueVol * outVol;
+    v.volume = effVol;
+    v.muted = !useLocalAudio || effVol <= 0.001;
+    if (!v.muted && v.paused && !v.ended) {
+      v.play().catch(() => {});
+    }
+    const targetSink = state.settings.audioDeviceId || '';
+    if (typeof v.setSinkId === 'function' && targetSink !== (v.sinkId || '')) {
+      v.setSinkId(targetSink).catch(() => {
+        if (targetSink !== '') v.setSinkId('').catch(() => {});
+      });
     }
   }
 
@@ -996,11 +1949,11 @@
   }
 
   function renderPreviewBox(boxEl, cue, emptyText, withBlurBackdrop, animateTransition) {
+    const srcType = cue ? (cue.sourceType || 'media') : 'media';
     const renderKey = cue
-      ? `${cue.id}|${cue.vis || ''}|${cue.aud || ''}|${cue.fit || ''}|${cue.loop ? 1 : 0}`
+      ? `${cue.id}|${srcType}|${cue.cameraId || ''}|${cue.generator || ''}|${cue.vis || ''}|${cue.aud || ''}|${cue.fit || ''}|${cue.loop ? 1 : 0}`
       : `empty|${emptyText}`;
 
-    // Không vẽ lại nếu nội dung không đổi (tránh nháy hình khi đang gõ tên/chỉnh slider)
     if (boxEl._renderedKey === renderKey) {
       if (boxEl.id === 'live-preview-box') syncLivePreviewVideoAudio();
       return;
@@ -1011,10 +1964,40 @@
     const layer = document.createElement('div');
     layer.className = 'preview-layer';
 
-    if (!cue || !cue.vis) {
+    if (!cue) {
       const empty = document.createElement('div');
       empty.className = 'preview-empty';
-      empty.textContent = cue && cue.aud ? `♪ Chỉ phát nhạc: ${window.api.baseName(cue.aud)}` : emptyText;
+      empty.textContent = emptyText;
+      layer.appendChild(empty);
+    } else if (srcType === 'camera') {
+      const card = document.createElement('div');
+      card.className = 'preview-virtual-card';
+      const badge = document.createElement('span');
+      badge.className = 'preview-virtual-badge';
+      badge.textContent = '📷 CAMERA / CAPTURE LIVE';
+      const camObj = state.videoDevices.find((d) => d.deviceId === cue.cameraId);
+      const ttl = document.createElement('div');
+      ttl.className = 'preview-virtual-title';
+      ttl.textContent = camObj && camObj.label ? camObj.label : 'Camera mặc định hệ thống';
+      card.appendChild(badge);
+      card.appendChild(ttl);
+      layer.appendChild(card);
+    } else if (srcType === 'generator') {
+      const card = document.createElement('div');
+      card.className = 'preview-virtual-card';
+      const badge = document.createElement('span');
+      badge.className = 'preview-virtual-badge';
+      badge.textContent = '✨ VJ GENERATOR';
+      const ttl = document.createElement('div');
+      ttl.className = 'preview-virtual-title';
+      ttl.textContent = GENERATOR_TITLES[cue.generator] || cue.generator || 'Laser Beams';
+      card.appendChild(badge);
+      card.appendChild(ttl);
+      layer.appendChild(card);
+    } else if (!cue.vis) {
+      const empty = document.createElement('div');
+      empty.className = 'preview-empty';
+      empty.textContent = cue.aud ? `♪ Chỉ phát nhạc: ${window.api.baseName(cue.aud)}` : emptyText;
       layer.appendChild(empty);
     } else {
       const url = window.api.toFileUrl(cue.vis, state.projectFilePath);
@@ -1022,16 +2005,28 @@
       const fitStyle = cue.fit === 'cover' ? 'cover' : 'contain';
 
       if (kind === 'image') {
+        let bg = null;
         if (withBlurBackdrop) {
-          const bg = document.createElement('img');
+          bg = document.createElement('img');
           bg.className = 'preview-backdrop';
+          bg.onerror = () => { if (bg.parentNode) bg.remove(); };
           bg.src = url;
           layer.appendChild(bg);
         }
         const img = document.createElement('img');
         img.className = 'preview-fg';
-        img.src = url;
         img.style.objectFit = fitStyle;
+        img.onerror = () => {
+          if (bg && bg.parentNode) bg.remove();
+          if (img.parentNode) img.remove();
+          if (!layer.querySelector('.preview-empty')) {
+            const fallback = document.createElement('div');
+            fallback.className = 'preview-empty';
+            fallback.textContent = `Không tải được ảnh: ${window.api.baseName(cue.vis)}`;
+            layer.appendChild(fallback);
+          }
+        };
+        img.src = url;
         layer.appendChild(img);
       } else {
         const v = document.createElement('video');
@@ -1066,7 +2061,9 @@
         );
         outA.onfinish = () => {
           if (oldVid) {
-            try { oldVid.pause(); oldVid.removeAttribute('src'); oldVid.load(); } catch (_) {}
+            audioEngine.disconnectLiveVideoElement(oldVid);
+            try { oldVid.pause(); oldVid.removeAttribute('src'); } catch (_) {}
+            setTimeout(() => { try { oldVid.load(); } catch (_) {} }, 0);
           }
           if (old.parentNode) old.parentNode.removeChild(old);
         };
@@ -1078,12 +2075,15 @@
       );
       inA.onfinish = () => {
         layer.style.opacity = '1';
+        if (boxEl.id === 'live-preview-box') syncLivePreviewVideoAudio();
       };
     } else {
       oldLayers.forEach((old) => {
         const oldVid = old.querySelector('video');
         if (oldVid) {
-          try { oldVid.pause(); oldVid.removeAttribute('src'); oldVid.load(); } catch (_) {}
+          audioEngine.disconnectLiveVideoElement(oldVid);
+          try { oldVid.pause(); oldVid.removeAttribute('src'); } catch (_) {}
+          setTimeout(() => { try { oldVid.load(); } catch (_) {} }, 0);
         }
       });
       boxEl.innerHTML = '';
@@ -1095,18 +2095,7 @@
   function renderMonitors() {
     const liveCue = getLiveCue();
     const nextCue = getSelectedCue();
-
-    $('live-cue-title').textContent = liveCue ? liveCue.name : 'Chưa phát';
-    $('next-cue-title').textContent = nextCue ? nextCue.name : 'Chưa chọn';
-    $('go-next-hint').textContent = nextCue
-      ? `Phím Space — Chạy Cue ${state.selectedIndex + 1}: ${nextCue.name}`
-      : 'Phím Space — Chưa có Cue';
-
-    let followTxt = '';
-    if (nextCue && nextCue.autoFollow === 'time') followTxt = `Tự chuyển sau ${nextCue.autoDelay}s`;
-    else if (nextCue && nextCue.autoFollow === 'audio-end') followTxt = 'Tự chuyển khi hết nhạc';
-    $('auto-follow-badge').textContent = followTxt;
-
+    renderMonitorHeadersOnly();
     renderPreviewBox($('next-preview-box'), nextCue, 'Chọn một Cue bên trái', true, false);
     renderPreviewBox($('live-preview-box'), liveCue, 'Màn hình LED đang chờ', false, true);
   }
@@ -1148,7 +2137,7 @@
         cue.fx.minInterval = preset.minInterval;
         cue.fx.bassLow = preset.bassLow;
         cue.fx.bassHigh = preset.bassHigh;
-        cue.fx.src = 'auto';
+        if (cue.fx.src !== 'video') cue.fx.src = 'auto';
         scheduleAutosave();
         renderEditor();
         sendLiveCueFxIfActive(cue);
@@ -1162,6 +2151,7 @@
     if (cue.id === state.liveCueId) {
       state.liveCueSnapshot = JSON.parse(JSON.stringify(cue));
       audioEngine.configureBassAnalysis(cue.fx);
+      syncLivePreviewVideoAudio();
       syncAnalysisSourceRouting();
       if (!state.rehearsalMode) {
         window.api.sendToLed({ type: 'fx', fx: cue.fx });
@@ -1183,28 +2173,32 @@
   }
 
   async function renderWaveformForCue(cue) {
+    const myToken = ++waveformToken;
     const canvas = $('waveform-canvas');
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#080B10';
+    ctx.fillStyle = '#191b22';
     ctx.fillRect(0, 0, w, h);
 
     if (!cue || !cue.aud) {
-      ctx.fillStyle = '#5C6880';
+      ctx.fillStyle = '#969cb0';
       ctx.font = '11.5px Segoe UI';
       ctx.fillText('Chưa chọn tệp nhạc cho Cue này', 12, 38);
       canvas.dataset.duration = '0';
       return;
     }
 
-    ctx.fillStyle = '#8A96AC';
+    ctx.fillStyle = '#969cb0';
     ctx.font = '11.5px Segoe UI';
     ctx.fillText('Đang phân tích sóng âm...', 12, 38);
 
     const data = await audioEngine.getWaveformPeaks(cue.aud, state.projectFilePath, 160);
-    ctx.fillStyle = '#080B10';
+    if (myToken !== waveformToken) return;
+
+    ctx.fillStyle = '#191b22';
     ctx.fillRect(0, 0, w, h);
 
     if (!data || !data.peaks) {
@@ -1224,13 +2218,13 @@
       ? logic.clamp(cue.endAt / data.duration, 0, 1)
       : 1;
 
-    ctx.fillStyle = 'rgba(0, 210, 255, 0.09)';
+    ctx.fillStyle = 'rgba(240, 0, 140, 0.12)';
     ctx.fillRect(startRatio * w, 0, (endRatio - startRatio) * w, h);
 
     peaks.forEach((p, i) => {
       const ratio = i / peaks.length;
       const inRange = ratio >= startRatio && ratio <= endRatio;
-      ctx.fillStyle = inRange ? '#00D2FF' : '#2C364B';
+      ctx.fillStyle = inRange ? '#f0008c' : '#3a4052';
       const barH = Math.max(2, p * (h - 10));
       ctx.fillRect(i * barW, midY - barH / 2, Math.max(1, barW - 1), barH);
     });
@@ -1288,12 +2282,44 @@
     }
   }
 
+  function syncCueSourceTypeVisibility(sourceType) {
+    const st = ['media', 'camera', 'generator'].includes(sourceType) ? sourceType : 'media';
+    $('wrap-vis-media').classList.toggle('hidden', st !== 'media');
+    $('wrap-vis-camera').classList.toggle('hidden', st !== 'camera');
+    $('wrap-vis-generator').classList.toggle('hidden', st !== 'generator');
+  }
+
+  async function refreshCameraDevices() {
+    if (typeof audioEngine.listVideoInputDevices === 'function') {
+      state.videoDevices = await audioEngine.listVideoInputDevices();
+    } else {
+      state.videoDevices = [];
+    }
+    const sel = $('ed-camera-id');
+    if (!sel) return;
+    const curVal = sel.value;
+    sel.innerHTML = '';
+    const defOpt = document.createElement('option');
+    defOpt.value = '';
+    defOpt.textContent = 'Camera mặc định hệ thống';
+    sel.appendChild(defOpt);
+    state.videoDevices.forEach((cam, idx) => {
+      const opt = document.createElement('option');
+      opt.value = cam.deviceId || '';
+      opt.textContent = cam.label || `Camera ${idx + 1}`;
+      sel.appendChild(opt);
+    });
+    const cue = getSelectedCue();
+    sel.value = (cue && cue.cameraId) || curVal || '';
+  }
+
   function renderEditor() {
     const cue = getSelectedCue();
     if (!cue) {
       $('editor-empty').classList.remove('hidden');
       $('editor-body').classList.add('hidden');
       $('editing-cue-badge').textContent = 'Thuộc tính Cue';
+      if (ledDmxUi) ledDmxUi.renderInspectorTab();
       return;
     }
 
@@ -1303,6 +2329,10 @@
 
     $('ed-name').value = cue.name;
     $('ed-note').value = cue.note;
+    $('ed-source-type').value = cue.sourceType || 'media';
+    syncCueSourceTypeVisibility(cue.sourceType || 'media');
+    $('ed-camera-id').value = cue.cameraId || '';
+    $('ed-generator').value = cue.generator || 'laser-beams';
     $('ed-vis').value = cue.vis || '';
     $('ed-tr').value = cue.tr;
     $('ed-dur').value = cue.dur;
@@ -1333,6 +2363,7 @@
     $('fx-off').value = fx.off;
     $('fx-bpm-controls').classList.toggle('hidden', fx.src !== 'bpm');
     $('fx-ext-controls').classList.toggle('hidden', fx.src !== 'ext');
+    if ($('fx-video-controls')) $('fx-video-controls').classList.toggle('hidden', fx.src !== 'video');
     $('wrap-fx-delay').classList.toggle('hidden', fx.src === 'ext');
     $('fx-motion').value = fx.motion;
 
@@ -1375,8 +2406,126 @@
 
     renderFxPresets();
     renderBassPresets();
+    if (ledDmxUi) {
+      ledDmxUi.renderInspectorTab();
+      ledDmxUi.renderQuickDeck();
+    }
     syncAllToggleSections(cue);
-    renderWaveformForCue(cue);
+    updateVideoBeatStatusUi(performance.now(), true);
+    const audioTabEl = $('tab-audio');
+    if (audioTabEl && audioTabEl.classList.contains('active')) {
+      renderWaveformForCue(cue);
+    }
+  }
+
+  // =========================================================================
+  // MASTER LIVE FX RACK & OUTPUT MAPPING + STAGE DISPLAY
+  // =========================================================================
+
+  function pushMasterFxToLed() {
+    if (!state.rehearsalMode) {
+      window.api.sendToLed({ type: 'master-fx', masterFx: state.project.masterFx });
+    }
+  }
+
+  function renderMasterFxControls() {
+    const mfx = logic.createDefaultMasterFx(state.project.masterFx);
+    state.project.masterFx = mfx;
+    $('mfx-dimmer').value = mfx.dimmer;
+    $('mfx-dimmer-v').textContent = mfx.dimmer;
+    $('mfx-contrast').value = mfx.contrast;
+    $('mfx-contrast-v').textContent = mfx.contrast;
+    $('mfx-saturate').value = mfx.saturate;
+    $('mfx-saturate-v').textContent = mfx.saturate;
+    $('mfx-hue').value = mfx.hue;
+    $('mfx-hue-v').textContent = mfx.hue;
+    $('mfx-rgbsplit').value = mfx.rgbSplit;
+    $('mfx-rgbsplit-v').textContent = mfx.rgbSplit;
+    $('mfx-rgb-beat').checked = Boolean(mfx.rgbBeatLink);
+    $('mfx-glitch').value = mfx.glitch;
+    $('mfx-glitch-v').textContent = mfx.glitch;
+    $('mfx-glitch-beat').checked = Boolean(mfx.glitchBeatLink);
+    $('mfx-vignette').value = mfx.vignette;
+    $('mfx-vignette-v').textContent = mfx.vignette;
+    $('mfx-pixelate').value = mfx.pixelate;
+    $('mfx-pixelate-v').textContent = mfx.pixelate;
+    $('mfx-mirror').value = mfx.mirror || 'none';
+    $('mfx-invert').checked = Boolean(mfx.invert);
+  }
+
+  function pushOutputMappingToLed() {
+    if (!state.rehearsalMode) {
+      window.api.sendToLed({ type: 'output-mapping', mapping: state.project.outputMapping });
+    }
+  }
+
+  function renderMappingControls() {
+    const m = logic.createDefaultOutputMapping(state.project.outputMapping);
+    state.project.outputMapping = m;
+    $('map-crop-top').value = m.cropTop; $('map-crop-top-v').textContent = m.cropTop;
+    $('map-crop-bottom').value = m.cropBottom; $('map-crop-bottom-v').textContent = m.cropBottom;
+    $('map-crop-left').value = m.cropLeft; $('map-crop-left-v').textContent = m.cropLeft;
+    $('map-crop-right').value = m.cropRight; $('map-crop-right-v').textContent = m.cropRight;
+    $('map-offset-x').value = m.offsetX; $('map-offset-x-v').textContent = m.offsetX;
+    $('map-offset-y').value = m.offsetY; $('map-offset-y-v').textContent = m.offsetY;
+    $('map-scale-x').value = m.scaleX; $('map-scale-x-v').textContent = m.scaleX;
+    $('map-scale-y').value = m.scaleY; $('map-scale-y-v').textContent = m.scaleY;
+    $('map-rotate-x').value = m.rotateX; $('map-rotate-x-v').textContent = m.rotateX;
+    $('map-rotate-y').value = m.rotateY; $('map-rotate-y-v').textContent = m.rotateY;
+    $('map-perspective').value = m.perspective; $('map-perspective-v').textContent = m.perspective;
+    $('map-flip-h').checked = Boolean(m.flipH);
+    $('map-flip-v').checked = Boolean(m.flipV);
+  }
+
+  function renderStageDisplayUi(stage, displays) {
+    if (stage) state.stageStatus = stage;
+    if (displays) state.displays = displays;
+
+    const sel = $('stage-display-select');
+    if (sel) {
+      const prev = sel.value;
+      sel.innerHTML = '';
+      const autoOpt = document.createElement('option');
+      autoOpt.value = 'auto';
+      autoOpt.textContent = 'Tự chọn màn phụ trống (hoặc cửa sổ thử)';
+      sel.appendChild(autoOpt);
+
+      const previewOpt = document.createElement('option');
+      previewOpt.value = 'preview';
+      previewOpt.textContent = 'Mở dạng cửa sổ 960×540';
+      sel.appendChild(previewOpt);
+
+      state.displays.forEach((d) => {
+        const opt = document.createElement('option');
+        opt.value = String(d.id);
+        opt.textContent = `${d.label} (${d.bounds.width}×${d.bounds.height})`;
+        sel.appendChild(opt);
+      });
+      if (prev) sel.value = prev;
+    }
+
+    const st = state.stageStatus || { isOpen: false };
+    const pill = $('stage-status-pill');
+    const txt = $('stage-status-text');
+    const btn = $('btn-toggle-stage');
+    const detail = $('stage-modal-status');
+
+    if (pill && txt) {
+      pill.classList.remove('is-idle', 'is-live-input', 'is-warn');
+      if (st.isOpen) {
+        pill.classList.add(st.mode === 'fullscreen' ? 'is-live-input' : 'is-warn');
+        txt.textContent = st.mode === 'fullscreen' ? 'Stage: Bật' : 'Stage: Cửa sổ';
+      } else {
+        pill.classList.add('is-idle');
+        txt.textContent = 'Stage: Tắt';
+      }
+    }
+    if (btn) btn.textContent = st.isOpen ? 'Đóng Stage Display' : 'Mở Stage Display';
+    if (detail) {
+      detail.textContent = st.isOpen
+        ? `Đang mở Stage Display (${st.displayLabel || st.mode}, ${st.width}×${st.height}).`
+        : 'Stage Display đang tắt.';
+    }
   }
 
   function refreshAllUi() {
@@ -1384,6 +2533,19 @@
     renderCueList();
     renderMonitors();
     renderEditor();
+    if (vjDeckUi) vjDeckUi.render();
+    if (overlaysUi) overlaysUi.render();
+    if (ledDmxUi) {
+      ledDmxUi.renderQuickDeck();
+      ledDmxUi.renderInspectorTab();
+    }
+    renderMasterFxControls();
+    renderMappingControls();
+    pushMasterFxToLed();
+    pushOutputMappingToLed();
+    if (overlaysUi) overlaysUi.pushToLed(false);
+    if (ledDmxUi) ledDmxUi.sendLedSyncToOutput();
+    pushStageUpdate(true);
     syncRemoteState();
   }
 
@@ -1432,6 +2594,8 @@
       txt.textContent = 'LED: Đang đóng';
       pill.title = 'Màn hình LED đang đóng — Bấm để mở lại';
     }
+
+    renderStageDisplayUi(state.stageStatus, state.displays);
   }
 
   function updateAudioBadgeLabel() {
@@ -1440,7 +2604,7 @@
     if (!opt || !sel.value) {
       $('audio-status-text').textContent = 'Loa: Mặc định';
     } else {
-      const shortName = opt.textContent.replace(/\s*\(.*?\)\s*/g, '').slice(0, 18);
+      const shortName = opt.textContent.replace(/\s*\(.*?\)\s*/g, '').slice(0, 16);
       $('audio-status-text').textContent = `Loa: ${shortName}`;
     }
   }
@@ -1466,27 +2630,109 @@
     updateAudioBadgeLabel();
   }
 
-  /** Đồng bộ luồng tín hiệu đưa vào bộ phân tích DSP: nhạc phần mềm ('internal') hoặc Mixer/DJ ('external') */
   function syncAnalysisSourceRouting() {
     const liveCue = getLiveCue();
     const selCue = getSelectedCue();
     const track = audioEngine.getCurrentTrackInfo();
     const extOn = audioEngine.isExternalInputActive();
 
-    let useExternal = false;
+    let nextMode = 'internal';
     if (liveCue && liveCue.fx && liveCue.fx.on) {
-      useExternal = liveCue.fx.src === 'ext' && extOn;
+      if (liveCue.fx.src === 'ext' && extOn) nextMode = 'external';
+      else if (liveCue.fx.src === 'video') nextMode = 'video';
+    } else if (liveCue && liveCue.fx && liveCue.fx.src === 'video') {
+      nextMode = 'video';
     } else if (extOn && !track.playing) {
-      useExternal = true;
+      nextMode = 'external';
     } else if (selCue && selCue.fx && selCue.fx.src === 'ext' && extOn && !track.playing) {
-      useExternal = true;
+      nextMode = 'external';
     }
 
-    audioEngine.setAnalysisSourceMode(useExternal ? 'external' : 'internal');
+    audioEngine.setAnalysisSourceMode(nextMode);
     const refCue = liveCue || selCue;
     if (refCue && refCue.fx) {
       audioEngine.configureBassAnalysis(refCue.fx);
     }
+  }
+
+  function updateVideoBeatStatusUi(nowMs, force, ledVideoActiveArg, localVideoPlayingArg) {
+    const box = $('fx-video-controls');
+    const statusEl = $('fx-video-status');
+    const actionsEl = $('fx-video-actions');
+    const btnVsound = $('btn-fx-enable-vsound');
+    const btnGo = $('btn-fx-go-selected');
+    if (!box || !statusEl || !actionsEl || !btnVsound || !btnGo) return;
+
+    const selCue = getSelectedCue();
+    if (!selCue || !selCue.fx || selCue.fx.src !== 'video') {
+      updateVuMeter('fx-video-vu-meter', 0);
+      return;
+    }
+
+    const liveCue = getLiveCue();
+    const t = Number.isFinite(nowMs) ? nowMs : performance.now();
+    const localVideoPlaying = localVideoPlayingArg !== undefined ? Boolean(localVideoPlayingArg) : audioEngine.isLiveVideoPlaying();
+    const ledVideoActive = ledVideoActiveArg !== undefined
+      ? Boolean(ledVideoActiveArg)
+      : Boolean(
+          liveCue &&
+          liveCue.fx &&
+          liveCue.fx.src === 'video' &&
+          !state.rehearsalMode &&
+          state.ledStatus.isOpen &&
+          state.ledVideoTelemetry.playing &&
+          (t - state.ledVideoTelemetry.updatedAtMs < 450)
+        );
+
+    const videoVu = ledVideoActive
+      ? logic.clamp(Math.max(state.ledVideoTelemetry.env || 0, state.ledVideoTelemetry.bass || 0), 0, 1)
+      : (localVideoPlaying ? logic.clamp(state.localVideoEnv || 0, 0, 1) : 0);
+    updateVuMeter('fx-video-vu-meter', videoVu);
+
+    if (!force && (t - lastVideoStatusUiMs < 150)) return;
+    lastVideoStatusUiMs = t;
+
+    statusEl.classList.remove('is-ok', 'is-warn');
+    let text = '';
+    let tone = 'muted';
+    let showVsoundBtn = false;
+    let showGoBtn = false;
+
+    if (!liveCue || liveCue.id !== selCue.id) {
+      const selInfo = resolveCueVisualInfo(selCue);
+      if (selInfo.visKind === 'video' && selInfo.visUrl) {
+        text = `Cue #${state.selectedIndex + 1} chưa phát LIVE — bấm GO (Space) để phát Video này và bắt nhịp beat.`;
+        showGoBtn = true;
+      } else {
+        text = `Cue #${state.selectedIndex + 1} chưa có Video và chưa phát LIVE.`;
+      }
+      tone = 'warn';
+    } else {
+      const liveInfo = resolveCueVisualInfo(liveCue);
+      if (liveInfo.visKind !== 'video' || !liveInfo.visUrl) {
+        text = 'Cue đang phát LIVE không phải Video — hãy chọn Cue Video hoặc đổi nguồn beat.';
+        tone = 'warn';
+      } else if (liveCue.vsound === false || (liveCue.vvol ?? 100) <= 0) {
+        text = 'Cue LIVE đang tắt "Âm thanh gốc từ Video" — bật lại để DSP nhận tiếng.';
+        showVsoundBtn = true;
+        tone = 'warn';
+      } else if (ledVideoActive) {
+        text = `✔ Đang bắt nhịp từ tiếng Video LIVE: "${liveCue.name}"`;
+        tone = 'ok';
+      } else if (localVideoPlaying) {
+        text = `✔ Đang bắt nhịp từ tiếng Video xem trước: "${liveCue.name}"`;
+        tone = 'ok';
+      } else {
+        text = `⏳ Đang chờ tiếng từ Video "${liveCue.name}"...`;
+      }
+    }
+
+    if (statusEl.textContent !== text) statusEl.textContent = text;
+    if (tone === 'ok') statusEl.classList.add('is-ok');
+    else if (tone === 'warn') statusEl.classList.add('is-warn');
+    btnVsound.classList.toggle('hidden', !showVsoundBtn);
+    btnGo.classList.toggle('hidden', !showGoBtn);
+    actionsEl.classList.toggle('hidden', !showVsoundBtn && !showGoBtn);
   }
 
   function updateInputStatusPill(active, labelText) {
@@ -1496,7 +2742,7 @@
     pill.classList.remove('is-idle', 'is-live-input', 'is-off');
     if (active) {
       pill.classList.add('is-live-input');
-      const clean = (labelText || 'Line-In').replace(/\s*\(.*?\)\s*/g, '').slice(0, 16);
+      const clean = (labelText || 'Line-In').replace(/\s*\(.*?\)\s*/g, '').slice(0, 14);
       txt.textContent = `Mixer: ${clean}`;
     } else {
       pill.classList.add('is-idle');
@@ -1565,7 +2811,6 @@
   // VẼ WAVEFORM DECK TRUNG TÂM, BIỂU ĐỒ BASS & VÒNG LẶP 60 FPS
   // =========================================================================
 
-  /** Vẽ sóng âm xám-xanh thanh lịch kết hợp phổ âm trực tiếp trên thanh Media Console */
   function drawDeckWaveform(bars, progressRatio, playing) {
     const canvas = $('spectrum-canvas');
     const ctx = canvas.getContext('2d');
@@ -1595,9 +2840,9 @@
       const isPlayed = progressRatio > 0 && colRatio <= progressRatio;
 
       if (isPlayed) {
-        ctx.fillStyle = specVal > 0.75 ? '#38BDF8' : '#00D2FF';
+        ctx.fillStyle = specVal > 0.75 ? '#ff66be' : '#f0008c';
       } else {
-        ctx.fillStyle = playing ? '#333F58' : '#242D40';
+        ctx.fillStyle = playing ? '#43495c' : '#2e3240';
       }
 
       ctx.fillRect(i * colStep + 1, midY - barH / 2, barW, barH);
@@ -1626,7 +2871,7 @@
       bassChartBeats.shift();
     }
 
-    ctx.fillStyle = '#080B10';
+    ctx.fillStyle = '#191b22';
     ctx.fillRect(0, 0, w, h);
 
     let maxVal = 0.25;
@@ -1647,7 +2892,25 @@
       ctx.stroke();
     }
 
-    if (bassChartPoints.length < 2) return;
+    if (bassChartPoints.length < 2) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      const guideY = h - 14;
+      ctx.beginPath();
+      ctx.moveTo(0, guideY);
+      ctx.lineTo(w, guideY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#64748B';
+      ctx.font = '11px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Đang chờ tín hiệu âm thanh (bấm GO để phát)...', w / 2, h / 2 - 4);
+      ctx.restore();
+      return;
+    }
 
     ctx.save();
     ctx.strokeStyle = '#F59E0B';
@@ -1663,7 +2926,7 @@
     ctx.stroke();
     ctx.restore();
 
-    ctx.strokeStyle = '#00D2FF';
+    ctx.strokeStyle = '#ff3da8';
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     bassChartPoints.forEach((p, idx) => {
@@ -1683,52 +2946,91 @@
     beatRateTimestamps.push(nowMs);
   }
 
+  function emitLedBeatHit(k, clockStep, nowMs) {
+    if (nowMs - state.lastLedBeatHitMs < 45) return;
+    state.lastLedBeatHitMs = nowMs;
+    state.beatPulseLevel = Math.max(state.beatPulseLevel, logic.clamp(k, 0.3, 1));
+    flashBeatLamp(nowMs);
+    if (!state.rehearsalMode) {
+      window.api.sendToLed({
+        type: 'led-beat-hit',
+        k,
+        beatIndex: clockStep.beatIndex,
+        beatInBar: clockStep.beatInBar,
+        subBeat: clockStep.subBeatIndex,
+        bands: {
+          bass: state.lastAudioBands.bass,
+          mid: state.lastAudioBands.mid,
+          high: state.lastAudioBands.high
+        }
+      });
+    }
+  }
+
   function animationLoop() {
     const nowMs = performance.now();
+    const dtSec = Math.min(0.1, Math.max(0.001, (nowMs - lastAnimMs) / 1000));
+    lastAnimMs = nowMs;
+
+    const liveCue = getLiveCue();
     const bars = audioEngine.sampleSpectrum();
     const extSpec = audioEngine.sampleExternalSpectrum();
     const extOn = audioEngine.isExternalInputActive();
     const track = audioEngine.getCurrentTrackInfo();
+    const localVideoPlaying = audioEngine.isLiveVideoPlaying();
+    const ledVideoActive = Boolean(
+      liveCue &&
+      liveCue.fx &&
+      liveCue.fx.src === 'video' &&
+      !state.rehearsalMode &&
+      state.ledStatus.isOpen &&
+      state.ledVideoTelemetry.playing &&
+      (nowMs - state.ledVideoTelemetry.updatedAtMs < 450)
+    );
     const progressRatio = track.duration > 0 ? logic.clamp(track.currentTime / track.duration, 0, 1) : 0;
 
-    // Nếu không phát nhạc nội bộ mà đang mở cổng Mixer/DJ -> hiển thị phổ sóng âm trực tiếp của DJ
-    if (!track.playing && extOn) {
+    if (!track.playing && extOn && !localVideoPlaying && !ledVideoActive) {
       drawDeckWaveform(extSpec.bars, 0, true);
+    } else if (ledVideoActive) {
+      drawDeckWaveform(state.ledVideoTelemetry.spectrum, 0, true);
     } else {
-      drawDeckWaveform(bars, progressRatio, track.playing);
+      drawDeckWaveform(bars, progressRatio, track.playing || localVideoPlaying);
     }
     drawBassChart(nowMs);
+    stepPreviewBeatFx(dtSec);
 
-    // Cập nhật VU Meter cho Master, SFX và ngõ vào Mixer/DJ
+    const activeBars = ledVideoActive ? state.ledVideoTelemetry.spectrum : bars;
     let sumBar = 0;
-    for (let i = 0; i < 24; i++) sumBar += bars[i];
-    const avgLevel = track.playing ? (sumBar / 24) * (Number($('master-vol').value) / 100) * 1.35 : 0;
+    for (let i = 0; i < 24; i++) sumBar += (activeBars[i] || 0);
+    const avgLevel = (track.playing || localVideoPlaying || ledVideoActive)
+      ? (sumBar / 24) * (Number($('master-vol').value) / 100) * 1.35
+      : 0;
     updateVuMeter('master-vu-meter', avgLevel);
 
     state.sfxVuLevel = Math.max(0, state.sfxVuLevel - 0.03);
     updateVuMeter('sfx-vu-meter', state.sfxVuLevel);
-
     updateVuMeter('ext-opt-vu-meter', extOn ? extSpec.level : 0);
     updateVuMeter('fx-ext-vu-meter', extOn ? extSpec.level : 0);
+    updateVideoBeatStatusUi(nowMs, false, ledVideoActive, localVideoPlaying);
 
-    // Cập nhật sóng âm tiến trình mini trên thẻ Cue đang phát nhạc
-    document.querySelectorAll('[data-cue-wave]').forEach((el) => {
-      if (track.playing && el.dataset.cueWave === track.cueId) {
-        el.style.width = `${(progressRatio * 100).toFixed(1)}%`;
-      } else {
+    if (track.playing) {
+      hadPlayingWave = true;
+      document.querySelectorAll('[data-cue-wave]').forEach((el) => {
+        el.style.width = el.dataset.cueWave === track.cueId ? `${(progressRatio * 100).toFixed(1)}%` : '0%';
+      });
+    } else if (hadPlayingWave) {
+      hadPlayingWave = false;
+      document.querySelectorAll('[data-cue-wave]').forEach((el) => {
         el.style.width = '0%';
-      }
-    });
+      });
+    }
 
-    // Cập nhật beat/giây
     const rateCutoff = nowMs - 2000;
     while (beatRateTimestamps.length > 0 && beatRateTimestamps[0] < rateCutoff) {
       beatRateTimestamps.shift();
     }
-    const beatsPerSec = (beatRateTimestamps.length / 2).toFixed(1);
-    $('beat-rate').textContent = `${beatsPerSec} /s`;
+    $('beat-rate').textContent = `${(beatRateTimestamps.length / 2).toFixed(1)} /s`;
 
-    // Hiển thị tên bài hoặc trạng thái thu trực tiếp từ Mixer/DJ
     if (track.playing && track.cueTitle) {
       $('track-name').textContent = `${track.cueTitle} — ${track.fileName}`;
     } else if (extOn) {
@@ -1742,7 +3044,6 @@
       $('track-seek').value = String(Math.round(progressRatio * 1000));
     }
 
-    // Bộ đếm giờ trên khung ĐANG CHẠY (LIVE)
     const cdEl = $('live-countdown');
     let remainSec = -1;
     if (track.playing && track.duration > 0) {
@@ -1763,8 +3064,72 @@
       cdEl.classList.remove('is-urgent');
     }
 
-    // Chế độ thử beat hoặc BPM cố định
-    const liveCue = getLiveCue();
+    // 1. Master Beat Clock (tách nhịp 0.25x..4x, dot 1-2-3-4, LED beat hit)
+    state.beatPulseLevel = Math.max(0, state.beatPulseLevel - dtSec * 4.2);
+    const clockStep = masterBeatClock.step(nowMs);
+    state.lastBeatState = {
+      phase: clockStep.phase,
+      beatInBar: clockStep.beatInBar,
+      beatIndex: clockStep.beatIndex
+    };
+    if (clockStep.isBeat && ledDmxUi) {
+      ledDmxUi.updateBeatBarDots(clockStep.beatInBar);
+      ledDmxUi.flashBpmPill();
+    }
+
+    const activeLedSync = ledDmxUi ? ledDmxUi.getActiveLedSync() : logic.createDefaultLedSync();
+    if (
+      activeLedSync.on &&
+      clockStep.isSubBeat &&
+      (activeLedSync.trigger === 'beat' || activeLedSync.trigger === 'all')
+    ) {
+      emitLedBeatHit(0.88, clockStep, nowMs);
+    }
+
+    // 2. Sample 3-Band FFT Audio (~30Hz)
+    if (nowMs - state.lastAudioBandsSentMs >= 33) {
+      state.lastAudioBandsSentMs = nowMs;
+      const bands = ledVideoActive
+        ? {
+            bass: state.ledVideoTelemetry.bass,
+            mid: state.ledVideoTelemetry.mid,
+            high: state.ledVideoTelemetry.high,
+            spectrum: state.ledVideoTelemetry.spectrum
+          }
+        : (typeof audioEngine.sampleAudioBands === 'function'
+            ? audioEngine.sampleAudioBands()
+            : { bass: 0, mid: 0, high: 0, spectrum: bars });
+      state.lastAudioBands = bands;
+      updateThreeBandMeters(bands);
+
+      const hasSound =
+        track.playing ||
+        localVideoPlaying ||
+        ledVideoActive ||
+        (extOn && (bands.bass + bands.mid + bands.high) > 0.03);
+      if (!state.rehearsalMode && !ledVideoActive) {
+        window.api.sendToLed({
+          type: 'audio-bands',
+          bass: bands.bass,
+          mid: bands.mid,
+          high: bands.high,
+          spectrum: bands.spectrum,
+          bpm: state.masterBpm,
+          beatPhase: clockStep.phase,
+          playing: hasSound
+        });
+      }
+
+      if (activeLedSync.on && hasSound && (activeLedSync.trigger === 'mid' || activeLedSync.trigger === 'high')) {
+        const energy = activeLedSync.trigger === 'mid' ? bands.mid : bands.high;
+        if (energy > 0.56 && nowMs - state.lastBandPeakMs >= 130) {
+          state.lastBandPeakMs = nowMs;
+          emitLedBeatHit(logic.clamp(energy * 1.15, 0.45, 1), clockStep, nowMs);
+        }
+      }
+    }
+
+    // 3. Beat FX (chế độ thử beat hoặc BPM cố định)
     if (state.testBeatOn) {
       const selCue = getSelectedCue() || liveCue;
       const fx = selCue ? selCue.fx : logic.createDefaultFx({ on: true });
@@ -1772,6 +3137,7 @@
       const step = testBeatTracker.step(elapsedSec, fx.bpm, fx.off);
       if (step.isBeat) {
         flashBeatLamp(nowMs);
+        triggerPreviewBeatFx(step.k, { ...fx, on: true });
         if (!state.rehearsalMode) {
           window.api.sendToLed({ type: 'beat', k: step.k, fx: { ...fx, on: true } });
         }
@@ -1781,10 +3147,49 @@
       const res = bpmBeatTracker.step(track.currentTime, fx.bpm, fx.off);
       if (res.isBeat) {
         flashBeatLamp(nowMs);
+        triggerPreviewBeatFx(res.k, fx);
         if (!state.rehearsalMode) {
           window.api.sendToLed({ type: 'beat', k: res.k, fx });
         }
       }
+    }
+
+    // 4. Tick OV3 Event Timer
+    if (overlaysUi) {
+      overlaysUi.tick(nowMs);
+    }
+
+    // 5. DMX Frame (~35Hz) & 8-Fixture Stage LED Visualizer
+    const dmxCfg = ledDmxUi ? ledDmxUi.getDmxConfig() : state.project.dmxConfig;
+    const dmxIntervalMs = 1000 / logic.clamp(dmxCfg && dmxCfg.fps ? dmxCfg.fps : 35, 5, 44);
+    if (nowMs - state.lastDmxSentMs >= dmxIntervalMs) {
+      state.lastDmxSentMs = nowMs;
+      let dmxLedSync = activeLedSync;
+      let dmxPulse = state.beatPulseLevel;
+      if (ledDmxUi && ledDmxUi.momentaryState.strobe) {
+        dmxLedSync = { ...activeLedSync, on: true, dmxMode: 'strobe', intensity: 100 };
+        dmxPulse = 1;
+      } else if (ledDmxUi && (ledDmxUi.momentaryState.flash || ledDmxUi.momentaryState.drop)) {
+        dmxLedSync = { ...activeLedSync, on: true, dmxMode: 'beat-flash', intensity: 100 };
+        dmxPulse = 1;
+      }
+      const dmxBeat = {
+        phase: clockStep.phase,
+        beatInBar: clockStep.beatInBar,
+        beatIndex: clockStep.beatIndex,
+        pulse: dmxPulse
+      };
+      const frame = logic.computeDmxFrame(dmxCfg, dmxLedSync, dmxBeat, state.lastAudioBands, nowMs);
+      if (ledDmxUi) ledDmxUi.updateStageVisualizer(frame.previews);
+      if (dmxCfg && dmxCfg.enabled && !state.rehearsalMode) {
+        window.api.sendDmxFrame(frame.channels);
+      }
+    }
+
+    // 6. Stage Display update (~4Hz)
+    if (nowMs - state.lastStageSentMs >= 250) {
+      state.lastStageSentMs = nowMs;
+      pushStageUpdate(false);
     }
 
     requestAnimationFrame(animationLoop);
@@ -1856,7 +3261,6 @@
 
       btn.addEventListener('click', () => triggerSfxPad(idx));
 
-      // Hỗ trợ kéo thả file âm thanh trực tiếp lên ô SFX khi không ở chế độ khóa Show
       btn.addEventListener('dragover', (e) => {
         if (state.showMode || !isExternalFileDrag(e)) return;
         e.preventDefault();
@@ -1884,6 +3288,7 @@
         scheduleAutosave();
         await verifyAllMediaFiles();
         renderSfxPads();
+        syncRemoteState();
         showBanner(`Đã gán âm thanh "${window.api.baseName(paths[0])}" vào ô SFX "${pad.name}".`);
       });
 
@@ -1891,7 +3296,6 @@
     });
   }
 
-  /** Kích hoạt hiệu ứng đèn viền sáng rực & chớp nháy kiểu nút Cue trên bàn DJ khi vừa nhấn */
   function triggerDjPadBurst(padId, durationMs = 580) {
     let targetBtn = null;
     document.querySelectorAll('.sfx-square-pad').forEach((btn) => {
@@ -1905,7 +3309,6 @@
 
     if (targetBtn) {
       targetBtn.classList.remove('is-dj-burst');
-      // Ép trình duyệt khởi động lại chu kỳ chớp sáng ngay lập tức khi nhấp dồn liên tiếp như bàn DJ
       void targetBtn.offsetWidth;
       targetBtn.classList.add('is-dj-burst');
     }
@@ -1949,6 +3352,7 @@
         pad.name = nameInput.value.trim() || `SFX ${idx + 1}`;
         scheduleAutosave();
         renderSfxPads();
+        syncRemoteState();
       });
 
       const keyBtn = document.createElement('button');
@@ -2012,6 +3416,7 @@
         scheduleAutosave();
         renderSfxPads();
         renderSfxSettingsModal();
+        syncRemoteState();
       });
 
       const testBtn = document.createElement('button');
@@ -2073,6 +3478,7 @@
         await verifyAllMediaFiles();
         renderSfxPads();
         renderSfxSettingsModal();
+        syncRemoteState();
       });
 
       listEl.appendChild(row);
@@ -2091,10 +3497,8 @@
     const pad = state.project.sfxPads[idx];
     if (!pad) return;
 
-    // Luôn bật đèn chớp viền kiểu nút Cue bàn DJ ngay khi nhấn chuột hoặc phím tắt
     triggerDjPadBurst(pad.id);
 
-    // Không bao giờ tự bung cửa sổ Cài đặt SFX khi bấm vào ô trống (ở mọi chế độ Biên tập / Tập dượt / Show)
     if (!pad.path) {
       const keyTag = pad.hotkey && pad.hotkeyLabel ? ` [${pad.hotkeyLabel}]` : '';
       showBanner(`Ô SFX "${pad.name}"${keyTag} chưa được gán tệp âm thanh — bấm "⚙ Cài đặt SFX" khi cần chọn file.`);
@@ -2147,13 +3551,13 @@
       btn.addEventListener('click', () => setOperatingMode(btn.dataset.mode));
     });
 
-    // Tabs Thuộc tính Cue
+    // Khởi tạo giao diện docked + Bottom Drawer + List/Grid + Resizers kiểu FreeShow
+    initFreeShowDrawerAndResizers();
+
+    // Right Column Tabs Thuộc tính Cue
     document.querySelectorAll('.tab-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-        document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
-        btn.classList.add('active');
-        $(btn.dataset.tab).classList.add('active');
+        activateInspectorTab(btn.dataset.tab);
       });
     });
 
@@ -2164,13 +3568,29 @@
       if (state.ledStatus.isOpen) {
         const st = await window.api.closeLed();
         renderLedAndDisplayUi(st);
+        syncLivePreviewVideoAudio();
       } else {
         const st = await window.api.openLed($('display-select').value);
         renderLedAndDisplayUi(st);
+        syncLivePreviewVideoAudio();
       }
     };
     $('btn-toggle-led').addEventListener('click', toggleLedAction);
     $('led-status-pill').addEventListener('click', toggleLedAction);
+
+    const toggleStageAction = async () => {
+      if (state.stageStatus && state.stageStatus.isOpen) {
+        const st = await window.api.closeStage();
+        renderStageDisplayUi(st);
+      } else {
+        const sel = $('stage-display-select');
+        const st = await window.api.openStage(sel ? sel.value : 'auto');
+        renderStageDisplayUi(st);
+        pushStageUpdate(true);
+      }
+    };
+    $('stage-status-pill').addEventListener('click', toggleStageAction);
+    $('btn-toggle-stage').addEventListener('click', toggleStageAction);
 
     $('audio-status-pill').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2241,9 +3661,18 @@
       }
     });
 
+    // Switcher Strip (T-Bar + CUT / FADE / WIPE / FTB)
+    $('tbar-slider').addEventListener('input', (e) => {
+      handleTbarInput(Number(e.target.value));
+    });
+    $('btn-sw-cut').addEventListener('click', () => triggerSelectedWithTransition('cut', 0));
+    $('btn-sw-fade').addEventListener('click', () => triggerSelectedWithTransition('fade'));
+    $('btn-sw-wipe').addEventListener('click', () => triggerSelectedWithTransition('wipe-left'));
+    $('btn-sw-ftb').addEventListener('click', () => toggleBlackout());
+
     // Nút GO & Nút chức năng & Bảng 6 ô SFX
     $('btn-go').addEventListener('click', handleGo);
-    $('btn-blackout').addEventListener('click', toggleBlackout);
+    $('btn-blackout').addEventListener('click', () => toggleBlackout());
     $('btn-fade-music').addEventListener('click', fadeOutMusicPanic);
     $('btn-stop-all').addEventListener('click', stopAllPanic);
     $('btn-test-pattern').addEventListener('click', toggleTestPattern);
@@ -2261,6 +3690,76 @@
     $('btn-stop-sfx').addEventListener('click', () => {
       audioEngine.stopAllSfx(0.25);
       state.sfxVuLevel = 0;
+    });
+
+    // Live FX Rack (Master FX)
+    const bindMfx = (id, evName, fn) => {
+      $(id).addEventListener(evName, (e) => {
+        fn(state.project.masterFx, e.target);
+        scheduleAutosave();
+        renderMasterFxControls();
+        pushMasterFxToLed();
+      });
+    };
+    bindMfx('mfx-dimmer', 'input', (fx, el) => { fx.dimmer = logic.clamp(el.value, 0, 100); });
+    bindMfx('mfx-contrast', 'input', (fx, el) => { fx.contrast = logic.clamp(el.value, 50, 200); });
+    bindMfx('mfx-saturate', 'input', (fx, el) => { fx.saturate = logic.clamp(el.value, 0, 250); });
+    bindMfx('mfx-hue', 'input', (fx, el) => { fx.hue = logic.clamp(el.value, -180, 180); });
+    bindMfx('mfx-rgbsplit', 'input', (fx, el) => { fx.rgbSplit = logic.clamp(el.value, 0, 40); });
+    bindMfx('mfx-rgb-beat', 'change', (fx, el) => { fx.rgbBeatLink = el.checked; });
+    bindMfx('mfx-glitch', 'input', (fx, el) => { fx.glitch = logic.clamp(el.value, 0, 100); });
+    bindMfx('mfx-glitch-beat', 'change', (fx, el) => { fx.glitchBeatLink = el.checked; });
+    bindMfx('mfx-vignette', 'input', (fx, el) => { fx.vignette = logic.clamp(el.value, 0, 100); });
+    bindMfx('mfx-pixelate', 'input', (fx, el) => { fx.pixelate = logic.clamp(el.value, 0, 40); });
+    bindMfx('mfx-mirror', 'change', (fx, el) => { fx.mirror = el.value; });
+    bindMfx('mfx-invert', 'change', (fx, el) => { fx.invert = el.checked; });
+    $('btn-reset-master-fx').addEventListener('click', () => {
+      state.project.masterFx = logic.createDefaultMasterFx();
+      scheduleAutosave();
+      renderMasterFxControls();
+      pushMasterFxToLed();
+    });
+
+    // Output Mapping & Stage Display Modal
+    const openMappingStageModal = async () => {
+      renderMappingControls();
+      const st = await window.api.getStageStatus();
+      renderStageDisplayUi(st);
+      $('mapping-stage-modal').classList.remove('hidden');
+    };
+    $('btn-open-mapping-modal').addEventListener('click', openMappingStageModal);
+    $('btn-open-stage-modal').addEventListener('click', openMappingStageModal);
+    $('btn-close-mapping-modal').addEventListener('click', () => $('mapping-stage-modal').classList.add('hidden'));
+    $('mapping-stage-modal').addEventListener('click', (e) => {
+      if (e.target === $('mapping-stage-modal')) $('mapping-stage-modal').classList.add('hidden');
+    });
+
+    const bindMap = (id, evName, fn) => {
+      $(id).addEventListener(evName, (e) => {
+        fn(state.project.outputMapping, e.target);
+        scheduleAutosave();
+        renderMappingControls();
+        pushOutputMappingToLed();
+      });
+    };
+    bindMap('map-crop-top', 'input', (m, el) => { m.cropTop = logic.clamp(el.value, 0, 45); });
+    bindMap('map-crop-bottom', 'input', (m, el) => { m.cropBottom = logic.clamp(el.value, 0, 45); });
+    bindMap('map-crop-left', 'input', (m, el) => { m.cropLeft = logic.clamp(el.value, 0, 45); });
+    bindMap('map-crop-right', 'input', (m, el) => { m.cropRight = logic.clamp(el.value, 0, 45); });
+    bindMap('map-offset-x', 'input', (m, el) => { m.offsetX = logic.clamp(el.value, -400, 400); });
+    bindMap('map-offset-y', 'input', (m, el) => { m.offsetY = logic.clamp(el.value, -400, 400); });
+    bindMap('map-scale-x', 'input', (m, el) => { m.scaleX = logic.clamp(el.value, 20, 200); });
+    bindMap('map-scale-y', 'input', (m, el) => { m.scaleY = logic.clamp(el.value, 20, 200); });
+    bindMap('map-rotate-x', 'input', (m, el) => { m.rotateX = logic.clamp(el.value, -35, 35); });
+    bindMap('map-rotate-y', 'input', (m, el) => { m.rotateY = logic.clamp(el.value, -35, 35); });
+    bindMap('map-perspective', 'input', (m, el) => { m.perspective = logic.clamp(el.value, 300, 3000); });
+    bindMap('map-flip-h', 'change', (m, el) => { m.flipH = el.checked; });
+    bindMap('map-flip-v', 'change', (m, el) => { m.flipV = el.checked; });
+    $('btn-reset-mapping').addEventListener('click', () => {
+      state.project.outputMapping = logic.createDefaultOutputMapping();
+      scheduleAutosave();
+      renderMappingControls();
+      pushOutputMappingToLed();
     });
 
     // Âm lượng Master & SFX
@@ -2314,7 +3813,6 @@
       $('btn-import-files').addEventListener('click', pickAndImportBatchFiles);
     }
 
-    // Chặn hành vi trình duyệt tự chuyển trang khi lỡ kéo thả tệp ra ngoài vùng nhận
     window.addEventListener('dragover', (e) => {
       if (isExternalFileDrag(e)) e.preventDefault();
     });
@@ -2325,23 +3823,18 @@
       }
     });
 
-    // Kéo thả tệp từ máy tính vào toàn bộ khung Danh sách Cue (Cột trái)
     const cuePanelEl = $('cue-panel');
     if (cuePanelEl) {
       cuePanelEl.addEventListener('dragenter', (e) => {
         if (!isExternalFileDrag(e)) return;
         e.preventDefault();
-        if (!state.showMode) {
-          cuePanelEl.classList.add('is-file-dragover');
-        }
+        if (!state.showMode) cuePanelEl.classList.add('is-file-dragover');
       });
       cuePanelEl.addEventListener('dragover', (e) => {
         if (!isExternalFileDrag(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = state.showMode ? 'none' : 'copy';
-        if (!state.showMode) {
-          cuePanelEl.classList.add('is-file-dragover');
-        }
+        if (!state.showMode) cuePanelEl.classList.add('is-file-dragover');
       });
       cuePanelEl.addEventListener('dragleave', (e) => {
         if (e.relatedTarget && cuePanelEl.contains(e.relatedTarget)) return;
@@ -2430,6 +3923,7 @@
         scheduleAutosave();
         renderCueList();
         renderMonitors();
+        pushStageUpdate(false);
       });
     };
 
@@ -2438,6 +3932,19 @@
       c.name = el.value.trim() || 'Cue chưa đặt tên';
     });
     bindCueEdit('ed-note', 'input', (c, el) => { if (!state.showMode) c.note = el.value; });
+    bindCueEdit('ed-source-type', 'change', (c, el) => {
+      if (state.showMode) return;
+      c.sourceType = ['media', 'camera', 'generator'].includes(el.value) ? el.value : 'media';
+      syncCueSourceTypeVisibility(c.sourceType);
+      if (c.sourceType === 'camera') refreshCameraDevices();
+    });
+    bindCueEdit('ed-camera-id', 'change', (c, el) => {
+      if (!state.showMode) c.cameraId = el.value || '';
+    });
+    $('btn-refresh-cameras').addEventListener('click', () => refreshCameraDevices());
+    bindCueEdit('ed-generator', 'change', (c, el) => {
+      if (!state.showMode) c.generator = el.value || 'laser-beams';
+    });
     bindCueEdit('ed-tr', 'change', (c, el) => { if (!state.showMode) c.tr = el.value; });
     bindCueEdit('ed-dur', 'input', (c, el) => { if (!state.showMode) c.dur = logic.clamp(el.value, 0, 10); });
     bindCueEdit('ed-fit', 'change', (c, el) => {
@@ -2521,7 +4028,6 @@
       renderMonitors();
     });
 
-    // Click hoặc Kéo thả trực tiếp vào ô Hình LED (#dropzone-vis / #tab-general) và ô Âm thanh (#dropzone-aud / #tab-audio)
     const bindMediaDropzone = (zoneId, paneId, onClickAction, onDropFilePath) => {
       const zone = $(zoneId);
       const pane = $(paneId);
@@ -2561,20 +4067,16 @@
           e.stopPropagation();
           highlightEl.classList.remove('is-dragover');
           const paths = extractDroppedFilePaths(e);
-          if (paths.length > 0) {
-            await onDropFilePath(paths[0]);
-          }
+          if (paths.length > 0) await onDropFilePath(paths[0]);
         });
       };
 
-      // Bắt kéo thả trên toàn bộ tab (hoặc trực tiếp trên khung dropzone) để khung sáng nhấp nháy ổn định
       attachDropEvents(pane || zone, zone);
     };
 
     bindMediaDropzone('dropzone-vis', 'tab-general', pickVisualAction, (p) => assignVisualFileToSelectedCue(p, true));
     bindMediaDropzone('dropzone-aud', 'tab-audio', pickAudioAction, (p) => assignAudioFileToSelectedCue(p, true));
 
-    // Nếu danh sách chưa có Cue nào mà kéo thả tệp vào khung trống bên phải (#editor-empty) -> tự tạo Cue luôn
     const emptyEditorEl = $('editor-empty');
     if (emptyEditorEl) {
       emptyEditorEl.addEventListener('dragover', (e) => {
@@ -2652,7 +4154,7 @@
     });
     $('waveform-canvas').addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Hiệu ứng Beat FX & Rung nền (vẫn cho phép chỉnh trực tiếp trong CHẾ ĐỘ SHOW)
+    // Hiệu ứng Beat FX & Rung nền
     const bindFxEdit = (elId, eventName, updater) => {
       $(elId).addEventListener(eventName, (e) => {
         const cue = getSelectedCue();
@@ -2674,15 +4176,17 @@
       }
     });
     bindFxEdit('fx-src', 'change', (fx, el) => {
-      fx.src = ['auto', 'bpm', 'ext'].includes(el.value) ? el.value : 'auto';
+      fx.src = ['auto', 'video', 'bpm', 'ext'].includes(el.value) ? el.value : 'auto';
       $('fx-bpm-controls').classList.toggle('hidden', fx.src !== 'bpm');
       $('fx-ext-controls').classList.toggle('hidden', fx.src !== 'ext');
+      if ($('fx-video-controls')) $('fx-video-controls').classList.toggle('hidden', fx.src !== 'video');
       $('wrap-fx-delay').classList.toggle('hidden', fx.src === 'ext');
       if (fx.src === 'ext' && !audioEngine.isExternalInputActive()) {
         enableExternalMixerInput(true);
       } else {
         syncAnalysisSourceRouting();
       }
+      updateVideoBeatStatusUi(performance.now(), true);
     });
     bindFxEdit('fx-bpm', 'input', (fx, el) => { fx.bpm = logic.clamp(el.value, 40, 240); });
     bindFxEdit('fx-off', 'input', (fx, el) => { fx.off = logic.clamp(el.value, -5, 5); });
@@ -2752,19 +4256,31 @@
       });
     });
 
-    $('btn-tap-bpm').addEventListener('click', () => {
-      const cue = getSelectedCue();
-      if (!cue) return;
-      state.tapTimestamps.push(performance.now());
-      if (state.tapTimestamps.length > 10) state.tapTimestamps.shift();
-      const bpm = logic.calculateTapBpm(state.tapTimestamps);
-      if (bpm !== null) {
-        cue.fx.bpm = bpm;
-        $('fx-bpm').value = bpm;
+    const btnEnableVsound = $('btn-fx-enable-vsound');
+    if (btnEnableVsound) {
+      btnEnableVsound.addEventListener('click', () => {
+        const cue = getLiveCue() || getSelectedCue();
+        if (!cue) return;
+        pushUndoSnapshot();
+        cue.vsound = true;
+        if ((cue.vvol ?? 0) <= 0) cue.vvol = 100;
         scheduleAutosave();
-        sendLiveCueFxIfActive(cue);
-      }
-    });
+        renderEditor();
+        sendLiveVideoAudioIfActive(cue);
+        syncAnalysisSourceRouting();
+      });
+    }
+
+    const btnFxGoSelected = $('btn-fx-go-selected');
+    if (btnFxGoSelected) {
+      btnFxGoSelected.addEventListener('click', () => {
+        if (state.selectedIndex >= 0 && state.selectedIndex < state.project.cues.length) {
+          triggerCueAt(state.selectedIndex, false);
+        }
+      });
+    }
+
+    $('btn-tap-bpm').addEventListener('click', handleTapBpm);
 
     $('btn-test-beat').addEventListener('click', () => {
       state.testBeatOn = !state.testBeatOn;
@@ -2794,24 +4310,13 @@
       const name = `Preset ${Object.keys(state.project.customFxPresets).length + 1} (${cue.name.slice(0, 10)})`;
       pushUndoSnapshot();
       state.project.customFxPresets[name] = {
-        scale: cue.fx.scale,
-        shake: cue.fx.shake,
-        rot: cue.fx.rot,
-        bright: cue.fx.bright,
-        hue: cue.fx.hue,
-        flash: cue.fx.flash,
-        decay: cue.fx.decay,
-        motion: cue.fx.motion,
-        step: cue.fx.step,
-        over: cue.fx.over,
-        idleOn: cue.fx.idleOn,
-        idleAmp: cue.fx.idleAmp,
-        idleRot: cue.fx.idleRot,
-        idleBreath: cue.fx.idleBreath,
-        idleSpeed: cue.fx.idleSpeed,
-        idleStyle: cue.fx.idleStyle,
-        idleCouple: cue.fx.idleCouple,
-        idleOnlyMusic: cue.fx.idleOnlyMusic
+        scale: cue.fx.scale, shake: cue.fx.shake, rot: cue.fx.rot,
+        bright: cue.fx.bright, hue: cue.fx.hue, flash: cue.fx.flash,
+        decay: cue.fx.decay, motion: cue.fx.motion, step: cue.fx.step,
+        over: cue.fx.over, idleOn: cue.fx.idleOn, idleAmp: cue.fx.idleAmp,
+        idleRot: cue.fx.idleRot, idleBreath: cue.fx.idleBreath,
+        idleSpeed: cue.fx.idleSpeed, idleStyle: cue.fx.idleStyle,
+        idleCouple: cue.fx.idleCouple, idleOnlyMusic: cue.fx.idleOnlyMusic
       };
       scheduleAutosave();
       renderFxPresets();
@@ -2840,7 +4345,7 @@
     bindTextEdit('txt-color', 'input', (t, el) => { t.color = el.value; });
     bindTextEdit('txt-bgbox', 'change', (t, el) => { t.bgBox = el.checked; });
 
-    // Modals: Kiểm tra giờ G, Công cụ mở rộng, Trợ giúp
+    // Modals: Pre-flight, Tools, Help
     $('btn-preflight').addEventListener('click', async () => {
       await verifyAllMediaFiles();
       const report = logic.runPreflightAnalysis(state.project, {
@@ -2890,6 +4395,7 @@
       const pin = $('remote-pin').value.trim();
       const st = await window.api.toggleRemote(enable, pin);
       updateRemoteUi(st);
+      syncRemoteState();
     });
 
     $('btn-apply-remote').addEventListener('click', async () => {
@@ -2897,6 +4403,7 @@
       const pin = $('remote-pin').value.trim();
       const st = await window.api.toggleRemote(enable, pin);
       updateRemoteUi(st);
+      syncRemoteState();
     });
   }
 
@@ -2906,15 +4413,25 @@
     $('remote-pin').value = st.pin || '1234';
     setSectionEnabled('group-remote-pin', Boolean(st.enabled));
     if (st.enabled) {
-      $('remote-info').textContent = `Đang BẬT — Mở trên điện thoại: ${(st.urls || []).join(' hoặc ')} (PIN: ${st.pin}, đang nối: ${st.clients || 0})`;
+      const urls = st.urls || [];
+      const stageUrls = urls.map((u) => `${u}/stage`).join(' · ');
+      $('remote-info').textContent =
+        `Đang BẬT — Remote: ${urls.join(' hoặc ')} (PIN: ${st.pin}) | Stage MC (/stage): ${stageUrls} | Đang nối: ${st.clients || 0}`;
     } else {
-      $('remote-info').textContent = 'Đang TẮT. Gạt nút bật để lấy địa chỉ truy cập trên điện thoại cùng Wi-Fi.';
+      $('remote-info').textContent = 'Đang TẮT. Gạt nút bật để lấy địa chỉ Remote & /stage trên điện thoại / tablet cùng Wi-Fi.';
     }
   }
 
   // =========================================================================
   // MỞ / LƯU / GÓI DỰ ÁN
   // =========================================================================
+
+  async function applyLoadedProjectServices() {
+    if (ledDmxUi) {
+      await ledDmxUi.applyDmxConfiguration();
+      await ledDmxUi.applyOscConfiguration();
+    }
+  }
 
   async function openProjectAction() {
     const res = await window.api.openProjectDialog();
@@ -2925,14 +4442,15 @@
     }
     pushUndoSnapshot();
     state.project = res.project;
+    ensureProjectV3Shape();
     state.projectFilePath = res.filePath;
     state.selectedIndex = state.project.cues.length > 0 ? 0 : -1;
     state.liveCueId = null;
     state.liveCueSnapshot = null;
     scheduleAutosave();
     await verifyAllMediaFiles();
-    renderSfxPads();
     refreshAllUi();
+    await applyLoadedProjectServices();
     if (res.warnings && res.warnings.length > 0) showBanner(res.warnings.join(' '));
   }
 
@@ -2964,15 +4482,92 @@
       return;
     }
     state.project = res.project;
+    ensureProjectV3Shape();
     state.projectFilePath = res.filePath;
     scheduleAutosave();
     await verifyAllMediaFiles();
-    renderSfxPads();
     refreshAllUi();
     const missMsg = res.missingFiles && res.missingFiles.length > 0
       ? ` (Lưu ý: ${res.missingFiles.length} tệp bị thiếu không chép được)`
       : '';
     showBanner(`Đã gói ${res.copiedCount} tệp media vào thư mục cùng dự án!${missMsg}`);
+  }
+
+  // =========================================================================
+  // XỬ LÝ LỆNH OSC & REMOTE LAN MỞ RỘNG
+  // =========================================================================
+
+  function handleOscCommand(msg) {
+    if (!msg || typeof msg.address !== 'string') return;
+    if (ledDmxUi) ledDmxUi.showLastOscMessage(msg);
+
+    const addr = msg.address.trim().toLowerCase();
+    const args = Array.isArray(msg.args) ? msg.args : [];
+    const arg0 = args[0];
+
+    if (addr === '/er/go') {
+      handleGo();
+    } else if (addr === '/er/back') {
+      handleSelectDelta(-1);
+    } else if (addr === '/er/blackout') {
+      toggleBlackout(arg0 !== undefined ? Boolean(Number(arg0) || arg0 === true) : undefined);
+    } else if (addr === '/er/stop') {
+      stopAllPanic();
+    } else if (addr === '/er/tbar') {
+      const n = Number(arg0);
+      if (Number.isFinite(n)) {
+        const pct = n <= 1.001 ? n * 100 : n;
+        handleTbarInput(pct);
+      }
+    } else if (/^\/er\/ov([1-4])$/.test(addr)) {
+      const idx = Number(addr.match(/^\/er\/ov([1-4])$/)[1]);
+      if (overlaysUi) {
+        overlaysUi.toggleOverlay(idx, arg0 !== undefined ? Boolean(Number(arg0) || arg0 === true) : undefined);
+      }
+    } else if (addr === '/er/flash') {
+      if (ledDmxUi) ledDmxUi.triggerFlashHit();
+    } else if (addr === '/er/strobe') {
+      const on = arg0 !== undefined ? Boolean(Number(arg0) || arg0 === true) : true;
+      if (ledDmxUi) ledDmxUi.setMomentary('strobe', on);
+    } else if (addr === '/er/bpm') {
+      const bpm = Number(arg0);
+      if (Number.isFinite(bpm) && bpm >= 40 && bpm <= 240) {
+        setMasterBpm(bpm, false);
+      }
+    } else if (/^\/er\/vj\/col(\/([1-4]))?$/.test(addr)) {
+      const m = addr.match(/^\/er\/vj\/col(?:\/([1-4]))?$/);
+      const colNum = m && m[1] ? Number(m[1]) : Math.round(Number(arg0) || 1);
+      if (vjDeckUi && colNum >= 1 && colNum <= 4) {
+        vjDeckUi.triggerColumn(colNum - 1);
+      }
+    } else if (addr === '/er/cue') {
+      const cueNum = Math.round(Number(arg0));
+      if (Number.isFinite(cueNum) && cueNum >= 1 && cueNum <= state.project.cues.length) {
+        triggerCueAt(cueNum - 1, true);
+      }
+    }
+  }
+
+  function handleRemoteCommand(cmd) {
+    if (typeof cmd !== 'string') return;
+    if (cmd === 'GO') handleGo();
+    else if (cmd === 'BACK') handleSelectDelta(-1);
+    else if (cmd === 'BLACK') toggleBlackout();
+    else if (cmd === 'STOP') stopAllPanic();
+    else if (cmd === 'FADE') fadeOutMusicPanic();
+    else if (cmd === 'TAP_BPM') handleTapBpm();
+    else if (cmd === 'OV1' && overlaysUi) overlaysUi.toggleOverlay(1);
+    else if (cmd === 'OV2' && overlaysUi) overlaysUi.toggleOverlay(2);
+    else if (cmd === 'OV3' && overlaysUi) overlaysUi.toggleOverlay(3);
+    else if (cmd === 'OV4' && overlaysUi) overlaysUi.toggleOverlay(4);
+    else if (cmd === 'FLASH_HIT' && ledDmxUi) ledDmxUi.triggerFlashHit();
+    else if (cmd === 'STROBE_HOLD_ON' && ledDmxUi) ledDmxUi.setMomentary('strobe', true);
+    else if (cmd === 'STROBE_HOLD_OFF' && ledDmxUi) ledDmxUi.setMomentary('strobe', false);
+    else if (/^SFX:([0-5])$/.test(cmd)) {
+      triggerSfxPad(Number(cmd.slice(4)));
+    } else if (/^LED_MODE:([a-z0-9-]+)$/i.test(cmd) && ledDmxUi) {
+      ledDmxUi.setLedModeBySlug(cmd.slice(9).toLowerCase());
+    }
   }
 
   // =========================================================================
@@ -2982,18 +4577,111 @@
   async function bootstrap() {
     initVuMeters();
 
+    // Khởi tạo 3 UI controller mới
+    vjDeckUi = new window.EventRunnerVjDeckUi({
+      logic,
+      audioEngine,
+      getProject: () => state.project,
+      getProjectFilePath: () => state.projectFilePath,
+      isShowMode: () => state.showMode,
+      isRehearsalMode: () => state.rehearsalMode,
+      pushUndo: pushUndoSnapshot,
+      scheduleAutosave,
+      showBanner,
+      extractDroppedPaths: extractDroppedFilePaths,
+      isExternalFileDrag
+    });
+
+    overlaysUi = new window.EventRunnerOverlaysUi({
+      logic,
+      getProject: () => state.project,
+      getProjectFilePath: () => state.projectFilePath,
+      isRehearsalMode: () => state.rehearsalMode,
+      scheduleAutosave,
+      showBanner,
+      onOverlaysChanged: () => {
+        pushStageUpdate(false);
+        syncRemoteState();
+      },
+      onStageMessageChanged: () => {
+        pushStageUpdate(true);
+        syncRemoteState();
+      }
+    });
+
+    ledDmxUi = new window.EventRunnerLedDmxUi({
+      logic,
+      getProject: () => state.project,
+      getSelectedCue,
+      getLiveCue,
+      isShowMode: () => state.showMode,
+      isRehearsalMode: () => state.rehearsalMode,
+      pushUndo: pushUndoSnapshot,
+      scheduleAutosave,
+      showBanner,
+      setSectionEnabled,
+      onTapBpm: handleTapBpm,
+      onAutoBpmToggle: (enabled) => {
+        state.autoBpmEnabled = Boolean(enabled);
+        state.beatTimesForAutoBpm = [];
+      },
+      onPhaseNudge: (ms) => {
+        masterBeatClock.nudge(ms);
+      },
+      onPhaseResync: () => {
+        masterBeatClock.resync(performance.now());
+      },
+      onDividerChange: (div) => {
+        masterBeatClock.setDivider(div);
+      },
+      getCurrentBpm: () => state.masterBpm
+    });
+
     const inputMapper = new window.EventRunnerInputMapper({
       onGo: handleGo,
       onSelectDelta: handleSelectDelta,
-      onToggleBlackout: toggleBlackout,
+      onToggleBlackout: () => toggleBlackout(),
       onFadeMusic: fadeOutMusicPanic,
       onStopAll: stopAllPanic,
       onToggleTestPattern: toggleTestPattern,
       onSave: saveProjectAction,
       onOpen: openProjectAction,
+      onToggleDrawer: () => {
+        const drawer = $('fs-drawer');
+        if (drawer) setDrawerCollapsed(!drawer.classList.contains('is-collapsed'));
+      },
+      onFocusSearch: () => {
+        const el = $('cue-search-input');
+        if (el) {
+          el.focus();
+          el.select();
+        }
+      },
       onUndo: performUndo,
       onRedo: performRedo,
-      onTriggerSfx: triggerSfxPad
+      onTriggerSfx: triggerSfxPad,
+      onFlashHit: () => ledDmxUi && ledDmxUi.triggerFlashHit(),
+      onStrobeHoldChange: (active) => ledDmxUi && ledDmxUi.setMomentary('strobe', active),
+      onTapBpm: handleTapBpm,
+      onQuickCut: () => triggerSelectedWithTransition('cut', 0),
+      onToggleOverlay: (num) => overlaysUi && overlaysUi.toggleOverlay(num),
+      onTriggerVjCol: (colIdx) => vjDeckUi && vjDeckUi.triggerColumn(colIdx),
+      onMidiClockBeat: (bpm) => setMasterBpm(bpm, false),
+      onMidiTbar: (norm) => handleTbarInput(Math.round(logic.clamp(norm, 0, 1) * 100)),
+      onMidiDimmer: (norm) => {
+        const val = Math.round(logic.clamp(norm, 0, 1) * 100);
+        state.project.masterFx.dimmer = val;
+        renderMasterFxControls();
+        pushMasterFxToLed();
+      },
+      onMidiStrobeIntensity: (norm) => {
+        const val = Math.round(logic.clamp(norm, 0, 1) * 100);
+        const target = ledDmxUi.getEditableLedSync();
+        target.intensity = val;
+        ledDmxUi.globalConfig.intensity = val;
+        ledDmxUi.renderInspectorTab();
+        ledDmxUi.sendLedSyncToOutput();
+      }
     });
     appInputMapper = inputMapper;
     inputMapper.initKeyboard();
@@ -3030,45 +4718,74 @@
 
     inputMapper.onMidiStatusChange = (txt) => { $('midi-status').textContent = txt; };
     inputMapper.onMidiLearned = (act, sig, fullMap) => {
-      $('midi-lbl-' + act).textContent = sig;
+      const lbl = $('midi-lbl-' + act);
+      if (lbl) lbl.textContent = sig;
       window.api.setSettings({ midiMap: fullMap });
     };
 
     document.querySelectorAll('[data-midi-learn]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const act = btn.dataset.midiLearn;
-        $('midi-lbl-' + act).textContent = 'Bấm nút trên MIDI...';
+        const lbl = $('midi-lbl-' + act);
+        if (lbl) lbl.textContent = 'Bấm nút/Fader MIDI...';
         inputMapper.startLearn(act);
       });
     });
 
     $('btn-midi-clear').addEventListener('click', () => {
-      const empty = { go: null, blackout: null, stopAll: null };
+      const empty = {};
+      MIDI_ACTION_KEYS.forEach((a) => {
+        empty[a] = null;
+        const lbl = $('midi-lbl-' + a);
+        if (lbl) lbl.textContent = 'Chưa gán';
+      });
       inputMapper.setMidiMap(empty);
-      ['go', 'blackout', 'stopAll'].forEach((a) => { $('midi-lbl-' + a).textContent = 'Chưa gán'; });
       window.api.setSettings({ midiMap: empty });
     });
 
-    // Beat từ AudioWorklet -> gửi sang LED NGAY LẬP TỨC (hỗ trợ cả nhạc phần mềm lẫn Line-In Mixer/DJ)
+    // Beat từ AudioWorklet -> gửi sang LED FX + LED Strobe Beat Hit + Auto-BPM
     audioEngine.onBassBeat = (beat) => {
       const nowMs = performance.now();
       const track = audioEngine.getCurrentTrackInfo();
       const extOn = audioEngine.isExternalInputActive();
+      const localVidOn = audioEngine.isLiveVideoPlaying();
       const liveCue = getLiveCue();
 
       const liveWantsExt = Boolean(liveCue && liveCue.fx && liveCue.fx.on && liveCue.fx.src === 'ext' && extOn);
       const liveWantsAuto = Boolean(liveCue && liveCue.fx && liveCue.fx.on && liveCue.fx.src === 'auto' && track.playing);
+      const liveWantsLocalVid = Boolean(
+        liveCue && liveCue.fx && liveCue.fx.on && liveCue.fx.src === 'video' &&
+        (state.rehearsalMode || !state.ledStatus.isOpen) && localVidOn
+      );
 
-      if (liveWantsExt || liveWantsAuto) {
+      if (liveWantsExt || liveWantsAuto || liveWantsLocalVid) {
         bassChartBeats.push(nowMs);
         flashBeatLamp(nowMs);
-        if (!state.rehearsalMode) {
+        triggerPreviewBeatFx(beat.k, liveCue.fx);
+        if (!state.rehearsalMode && !liveWantsLocalVid) {
           window.api.sendToLed({ type: 'beat', k: beat.k, fx: liveCue.fx });
         }
       } else if (!liveCue && extOn && !track.playing) {
-        // Khi chưa bấm GO nhưng đang bật thu Mixer để căn chỉnh Input Gain / Độ nhạy trước giờ diễn
         bassChartBeats.push(nowMs);
         flashBeatLamp(nowMs);
+      }
+
+      const activeLedSync = ledDmxUi.getActiveLedSync();
+      if (
+        activeLedSync.on &&
+        (activeLedSync.trigger === 'bass' || activeLedSync.trigger === 'all') &&
+        (track.playing || extOn || localVidOn)
+      ) {
+        emitLedBeatHit(beat.k, state.lastBeatState, nowMs);
+      }
+
+      if (state.autoBpmEnabled && (track.playing || extOn || localVidOn)) {
+        state.beatTimesForAutoBpm.push(nowMs);
+        if (state.beatTimesForAutoBpm.length > 24) state.beatTimesForAutoBpm.shift();
+        const est = logic.estimateBpmFromBeatTimes(state.beatTimesForAutoBpm);
+        if (est && est.confidence >= 0.45) {
+          setMasterBpm(est.bpm, false);
+        }
       }
     };
 
@@ -3076,19 +4793,26 @@
       const nowMs = performance.now();
       const track = audioEngine.getCurrentTrackInfo();
       const extOn = audioEngine.isExternalInputActive();
+      const localVidOn = audioEngine.isLiveVideoPlaying();
       const liveCue = getLiveCue();
-      const usingExt = Boolean(extOn && ((liveCue && liveCue.fx && liveCue.fx.src === 'ext') || !track.playing));
+      const usingExt = Boolean(extOn && ((liveCue && liveCue.fx && liveCue.fx.src === 'ext') || (!track.playing && !localVidOn)));
+      const usingLedVideo = Boolean(liveCue && liveCue.fx && liveCue.fx.src === 'video' && !state.rehearsalMode && state.ledStatus.isOpen);
 
-      if (track.playing || usingExt) {
+      if (localVidOn && !usingLedVideo) {
+        state.localVideoEnv = logic.clamp((msg && msg.env) || 0, 0, 1);
+      } else if (!localVidOn) {
+        state.localVideoEnv = 0;
+      }
+
+      if (!usingLedVideo && (track.playing || usingExt || localVidOn)) {
         bassChartPoints.push({
           timeMs: nowMs,
           o: msg.o || 0,
           threshold: msg.threshold || 0.015
         });
       }
-      if (!state.rehearsalMode) {
-        // Với nguồn Mixer/DJ: coi là đang có nhạc khi năng lượng đầu vào vượt ngưỡng tĩnh lặng (> 0.012)
-        const hasMusicSignal = usingExt ? ((msg.env || 0) > 0.012) : track.playing;
+      if (!state.rehearsalMode && !usingLedVideo) {
+        const hasMusicSignal = usingExt ? ((msg.env || 0) > 0.012) : (track.playing || localVidOn);
         window.api.sendToLed({
           type: 'level',
           env: hasMusicSignal ? (msg.env || 0) : 0,
@@ -3097,7 +4821,63 @@
       }
     };
 
-    audioEngine.onWorkletFallback = (msg) => showBanner(msg);
+    if (typeof window.api.onLedVideoBeat === 'function') {
+      window.api.onLedVideoBeat((beat) => {
+        const nowMs = performance.now();
+        const liveCue = getLiveCue();
+        if (!liveCue || !liveCue.fx || liveCue.fx.src !== 'video' || state.rehearsalMode || !state.ledStatus.isOpen) {
+          return;
+        }
+        if (liveCue.fx.on) {
+          bassChartBeats.push(nowMs);
+          flashBeatLamp(nowMs);
+          triggerPreviewBeatFx((beat && beat.k) || 0.85, liveCue.fx);
+        }
+        const activeLedSync = ledDmxUi.getActiveLedSync();
+        if (activeLedSync.on && (activeLedSync.trigger === 'bass' || activeLedSync.trigger === 'all')) {
+          emitLedBeatHit((beat && beat.k) || 0.85, state.lastBeatState, nowMs);
+        }
+        if (state.autoBpmEnabled) {
+          state.beatTimesForAutoBpm.push(nowMs);
+          if (state.beatTimesForAutoBpm.length > 24) state.beatTimesForAutoBpm.shift();
+          const est = logic.estimateBpmFromBeatTimes(state.beatTimesForAutoBpm);
+          if (est && est.confidence >= 0.45) {
+            setMasterBpm(est.bpm, false);
+          }
+        }
+      });
+    }
+
+    if (typeof window.api.onLedVideoTelemetry === 'function') {
+      window.api.onLedVideoTelemetry((msg) => {
+        const nowMs = performance.now();
+        const liveCue = getLiveCue();
+        if (!liveCue || !liveCue.fx || liveCue.fx.src !== 'video' || state.rehearsalMode || !state.ledStatus.isOpen) {
+          return;
+        }
+        const playing = Boolean(msg && msg.playing);
+        state.ledVideoTelemetry.playing = playing;
+        state.ledVideoTelemetry.updatedAtMs = nowMs;
+        state.ledVideoTelemetry.bass = Number(msg && msg.bass) || 0;
+        state.ledVideoTelemetry.mid = Number(msg && msg.mid) || 0;
+        state.ledVideoTelemetry.high = Number(msg && msg.high) || 0;
+        state.ledVideoTelemetry.env = Number(msg && msg.env) || 0;
+        if (msg && Array.isArray(msg.spectrum)) {
+          state.ledVideoTelemetry.spectrum = msg.spectrum;
+        }
+        if (playing) {
+          bassChartPoints.push({
+            timeMs: nowMs,
+            o: (msg && msg.o) || 0,
+            threshold: (msg && msg.threshold) || 0.015
+          });
+        }
+      });
+    }
+
+    audioEngine.onWorkletFallback = (msg) => {
+      if (msg) showBanner(msg);
+    };
     audioEngine.onSfxStateChange = (playingIds) => updatePlayingSfxHighlights(playingIds);
 
     audioEngine.onAudioEnded = (endedCueId) => {
@@ -3122,18 +4902,24 @@
       if (alert) showBanner(alert);
     });
 
+    window.api.onStageStatusChanged(({ stage, displays }) => {
+      renderStageDisplayUi(stage, displays);
+      if (stage && stage.isOpen) {
+        pushStageUpdate(true);
+      }
+    });
+
     window.api.onLedReady((ledStatus) => {
       renderLedAndDisplayUi(ledStatus);
       syncLivePreviewVideoAudio();
       const liveCue = getLiveCue();
       if (liveCue && !state.rehearsalMode) {
-        const visUrl = liveCue.vis ? window.api.toFileUrl(liveCue.vis, state.projectFilePath) : null;
-        const kind = liveCue.vis ? (logic.detectMediaKind(liveCue.vis) === 'image' ? 'image' : 'video') : null;
+        const { visUrl, visKind } = resolveCueVisualInfo(liveCue);
         window.api.sendToLed({
           type: 'show',
           cue: { ...JSON.parse(JSON.stringify(liveCue)), tr: 'cut', dur: 0 },
           url: visUrl,
-          mediaKind: kind,
+          mediaKind: visKind,
           masterVol: Number($('master-vol').value),
           sinkId: state.settings.audioDeviceId || ''
         });
@@ -3144,6 +4930,13 @@
         const sel = getSelectedCue();
         window.api.sendToLed({ type: 'test-idle', on: true, fx: sel ? sel.fx : logic.createDefaultFx() });
       }
+      if (!state.rehearsalMode) {
+        pushMasterFxToLed();
+        pushOutputMappingToLed();
+        if (overlaysUi) overlaysUi.pushToLed(false);
+        if (ledDmxUi) ledDmxUi.sendLedSyncToOutput();
+        if (vjDeckUi) vjDeckUi.reapplyActiveLayers();
+      }
     });
 
     window.api.onLedMediaError(({ path, message }) => {
@@ -3152,12 +4945,10 @@
       renderCueList();
     });
 
-    window.api.onRemoteCommand((cmd) => {
-      if (cmd === 'GO') handleGo();
-      else if (cmd === 'BACK') handleSelectDelta(-1);
-      else if (cmd === 'BLACK') toggleBlackout();
-      else if (cmd === 'STOP') stopAllPanic();
-    });
+    window.api.onRemoteCommand(handleRemoteCommand);
+    if (typeof window.api.onOscMessage === 'function') {
+      window.api.onOscMessage(handleOscCommand);
+    }
 
     state.settings = await window.api.getSettings();
     $('chk-auto-open-led').checked = state.settings.autoOpenLed !== false;
@@ -3176,37 +4967,53 @@
     if (state.settings.audioDeviceId) audioEngine.setOutputDevice(state.settings.audioDeviceId);
     if (state.settings.midiMap) {
       inputMapper.setMidiMap(state.settings.midiMap);
-      ['go', 'blackout', 'stopAll'].forEach((a) => {
-        if (state.settings.midiMap[a]) $('midi-lbl-' + a).textContent = state.settings.midiMap[a];
+      MIDI_ACTION_KEYS.forEach((a) => {
+        const lbl = $('midi-lbl-' + a);
+        if (lbl && state.settings.midiMap[a]) lbl.textContent = state.settings.midiMap[a];
       });
     }
 
     const autosave = await window.api.loadAutosave();
     if (autosave && autosave.exists && autosave.project) {
       state.project = autosave.project;
+      ensureProjectV3Shape();
       state.projectFilePath = autosave.projectFilePath || null;
       state.selectedIndex = state.project.cues.length > 0 ? 0 : -1;
     }
 
     bindUiEvents();
-    renderSfxPads();
+    vjDeckUi.bindStaticEvents();
+    overlaysUi.bindEvents();
+    ledDmxUi.bindEvents();
+
     refreshAllUi();
     await verifyAllMediaFiles();
 
-    const [displays, ledStatus] = await Promise.all([
+    const [displays, ledStatus, stageStatus] = await Promise.all([
       window.api.listDisplays(),
-      window.api.getLedStatus()
+      window.api.getLedStatus(),
+      window.api.getStageStatus()
     ]);
     renderLedAndDisplayUi(ledStatus, displays);
-    await refreshAudioDevices();
-    await refreshInputDevices();
+    syncLivePreviewVideoAudio();
+    renderStageDisplayUi(stageStatus, displays);
+
+    await Promise.all([
+      refreshAudioDevices(),
+      refreshInputDevices(),
+      refreshCameraDevices()
+    ]);
+
     if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === 'function') {
       navigator.mediaDevices.addEventListener('devicechange', () => {
         refreshAudioDevices();
         refreshInputDevices();
+        refreshCameraDevices();
       });
     }
     inputMapper.initMidi();
+
+    await applyLoadedProjectServices();
 
     $('clock-display').textContent = new Date().toTimeString().slice(0, 8);
     setInterval(() => {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; media-src 'self' file: data: blob: mediastream:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none';">
-  <title>EVENT RUNNER v2.4 — Bảng điều khiển sự kiện</title>
+  <title>EVENT RUNNER v3.0 PRO — Bảng điều khiển sự kiện</title>
   <link rel="stylesheet" href="src/styles/control.css">
 </head>
 <body>
@@ -11,7 +11,14 @@
   <header class="topbar">
     <!-- Trái: Tiêu đề + Menu dự án -->
     <div class="topbar-left">
-      <span class="brand-title">EVENT RUNNER <small>v2.4</small></span>
+      <span class="brand-title">
+        <svg class="brand-mark" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+          <rect x="2" y="3" width="16" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M8.2 6.1L12.6 8.3L8.2 10.5Z" fill="#f0008c"/>
+          <path d="M5 16.2H15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span>EVENT RUNNER <small>v3.0</small></span>
+      </span>
       <nav class="top-menu" aria-label="Menu chính">
         <div class="menu-item">
           <button class="menu-trigger" data-menu="menu-file">
@@ -86,6 +93,10 @@
                 <span class="lbl-muted" style="font-size:10.5px">Chỉ thu phân tích nhịp — không phát lặp ra loa (chống hú).</span>
               </div>
             </div>
+            <div class="menu-sep"></div>
+            <button id="btn-open-mapping-modal" class="menu-action"><span>Cắt khung &amp; Keystone LED (Output Mapping)...</span></button>
+            <button id="btn-open-stage-modal" class="menu-action"><span>Cửa sổ Stage Display (FreeShow)...</span></button>
+            <button id="btn-open-dmx-modal" class="menu-action"><span>Mạng DMX Art-Net/sACN &amp; OSC...</span></button>
           </div>
         </div>
 
@@ -116,7 +127,7 @@
       <button id="mode-btn-show" class="seg-pill" data-mode="show" title="Khóa sửa/xóa kịch bản an toàn khi chạy chương trình thật">CHẾ ĐỘ SHOW</button>
     </div>
 
-    <!-- Phải: Trạng thái LED, Loa, Bánh răng & Đồng hồ số -->
+    <!-- Phải: Trạng thái LED, Loa, Mixer, Stage, DMX, BPM & Đồng hồ số -->
     <div class="topbar-right">
       <button id="led-status-pill" class="status-pill is-off" title="Bấm để đóng/mở nhanh màn hình LED">
         <span class="dot"></span>
@@ -133,6 +144,21 @@
         <span id="input-status-text">Mixer: Tắt</span>
       </button>
 
+      <button id="stage-status-pill" class="status-pill is-idle" title="Bấm để đóng/mở nhanh cửa sổ Stage Display (FreeShow)">
+        <span class="dot"></span>
+        <span id="stage-status-text">Stage: Tắt</span>
+      </button>
+
+      <button id="dmx-status-pill" class="status-pill is-idle" title="Bấm để mở cài đặt DMX Art-Net / sACN & OSC">
+        <span class="dot"></span>
+        <span id="dmx-status-text">DMX: Tắt</span>
+      </button>
+
+      <button id="bpm-pill" class="status-pill is-bpm" title="Nhịp Master BPM — Bấm liên tiếp để TAP BPM (Phím P)">
+        <span class="dot"></span>
+        <span id="bpm-pill-text">120 BPM</span>
+      </button>
+
       <button id="btn-gear-settings" class="icon-btn" title="Cài đặt Remote LAN, MIDI & Nhật ký">
         <svg viewBox="0 0 16 16" width="15" height="15"><path fill="currentColor" d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0Zm4.358-6.43a1.2 1.2 0 0 0-1.716 0l-.584.602a1.2 1.2 0 0 1-1.158.31l-.813-.206a1.2 1.2 0 0 0-1.488.859l-.228.807a1.2 1.2 0 0 1-.846.846l-.807.228a1.2 1.2 0 0 0-.859 1.488l.206.813a1.2 1.2 0 0 1-.31 1.158l-.602.584a1.2 1.2 0 0 0 0 1.716l.602.584a1.2 1.2 0 0 1 .31 1.158l-.206.813a1.2 1.2 0 0 0 .859 1.488l.807.228a1.2 1.2 0 0 1 .846.846l.228.807a1.2 1.2 0 0 0 1.488.859l.813-.206a1.2 1.2 0 0 1 1.158.31l.584.602a1.2 1.2 0 0 0 1.716 0l.584-.602a1.2 1.2 0 0 1 1.158-.31l.813.206a1.2 1.2 0 0 0 1.488-.859l.228-.807a1.2 1.2 0 0 1 .846-.846l.807-.228a1.2 1.2 0 0 0 .859-1.488l-.206-.813a1.2 1.2 0 0 1 .31-1.158l.602-.584a1.2 1.2 0 0 0 0-1.716l-.602-.584a1.2 1.2 0 0 1-.31-1.158l.206-.813a1.2 1.2 0 0 0-.859-1.488l-.807-.228a1.2 1.2 0 0 1-.846-.846l-.228-.807a1.2 1.2 0 0 0-1.488-.859l-.813.206a1.2 1.2 0 0 1-1.158-.31l-.584-.602Z"/></svg>
       </button>
@@ -147,42 +173,58 @@
     <button id="alert-banner-close" class="btn-link">Đóng</button>
   </div>
 
-  <!-- LƯỚI 3 CỘT CHÍNH (25% - 45% - 30%) -->
+  <!-- KHUNG LÀM VIỆC CHÍNH KIỂU FREESHOW (3 CỘT CO GIÃN + NGĂN KÉO DƯỚI ĐÁY) -->
+  <div class="fs-main-shell">
   <main class="workspace-grid">
-    <!-- ==================== CỘT 1 (TRÁI ~25%): DANH SÁCH CUE ==================== -->
+    <!-- ==================== CỘT 1 (TRÁI): KỊCH BẢN SHOW (LIST / SLIDE GRID) ==================== -->
     <section id="cue-panel" class="col-panel col-left">
       <div class="col-header">
-        <span class="col-title">Danh sách Cue</span>
-        <span class="col-meta"><span id="project-name-label">Autosave</span> · <span id="cue-count-label">0</span></span>
-      </div>
-
-      <div class="cue-toolbar">
-        <button id="btn-add-cue" class="btn-add-cue edit-lockable" title="Tạo 1 Cue trống mới">
-          <span>＋ Thêm Cue</span>
-        </button>
-        <button id="btn-import-files" class="btn-import-cue edit-lockable" title="Nhập nhanh 1 hoặc nhiều file Ảnh, Video, Nhạc thành Cue">
-          <span>Nhập file</span>
-        </button>
-        <div class="cue-icon-tools">
-          <button id="btn-undo" class="icon-tool-btn edit-lockable" title="Hoàn tác (Ctrl+Z)">
-            <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M4.854 2.646a.5.5 0 0 1 0 .708L2.707 5.5H9.5a4.5 4.5 0 1 1 0 9H6a.5.5 0 0 1 0-1h3.5a3.5 3.5 0 1 0 0-7H2.707l2.147 2.146a.5.5 0 1 1-.708.708l-3-3a.5.5 0 0 1 0-.708l3-3a.5.5 0 0 1 .708 0Z"/></svg>
-          </button>
-          <button id="btn-redo" class="icon-tool-btn edit-lockable" title="Làm lại (Ctrl+Y)">
-            <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M11.146 2.646a.5.5 0 0 0 0 .708L13.293 5.5H6.5a4.5 4.5 0 1 0 0 9H10a.5.5 0 0 0 0-1H6.5a3.5 3.5 0 1 1 0-7h6.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708 0Z"/></svg>
-          </button>
-          <button id="btn-dup-cue" class="icon-tool-btn edit-lockable" title="Nhân đôi Cue đang chọn">
-            <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2Zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6ZM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1H2Z"/></svg>
-          </button>
-          <button id="btn-del-cue" class="icon-tool-btn is-danger edit-lockable" title="Xóa Cue đang chọn">
-            <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M6.5 1h3a.5.5 0 0 1 .5.5v1H6v-1a.5.5 0 0 1 .5-.5ZM11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3A1.5 1.5 0 0 0 5 1.5v1H1.5a.5.5 0 0 0 0 1h.538l.853 10.66A2 2 0 0 0 4.885 16h6.23a2 2 0 0 0 1.994-1.84l.853-10.66h.538a.5.5 0 0 0 0-1H11Zm1.958 1-.846 10.58a1 1 0 0 1-.997.92h-6.23a1 1 0 0 1-.997-.92L3.042 3.5h9.916Z"/></svg>
-          </button>
+        <span class="col-title">Kịch bản Show</span>
+        <div class="col-header-right">
+          <span class="col-meta"><span id="project-name-label">Autosave</span> · <span id="cue-count-label">0</span></span>
+          <div class="cue-view-toggle" role="group" aria-label="Kiểu hiển thị Cue">
+            <button type="button" id="btn-cue-view-list" class="cue-view-btn active" title="Xem dạng danh sách gọn (List)">☰</button>
+            <button type="button" id="btn-cue-view-grid" class="cue-view-btn" title="Xem dạng lưới Slide 16:9 kiểu FreeShow (Grid)">⊞</button>
+          </div>
         </div>
       </div>
 
-      <div id="cue-list" class="cue-list" role="listbox" aria-label="Danh sách Cue"></div>
+      <!-- DANH SÁCH CUE -->
+      <div id="left-pane-cues" class="left-pane active">
+        <div class="cue-search-bar">
+          <svg class="cue-search-ico" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85Zm-5.242.656a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z"/></svg>
+          <input type="text" id="cue-search-input" placeholder="Tìm nhanh Cue... (Ctrl+F)">
+          <button type="button" id="btn-cue-search-clear" class="cue-search-clear hidden" title="Xóa bộ lọc">×</button>
+        </div>
+        <div class="cue-toolbar">
+          <button id="btn-add-cue" class="btn-add-cue edit-lockable" title="Tạo 1 Cue trống mới">
+            <span>＋ Thêm Cue</span>
+          </button>
+          <button id="btn-import-files" class="btn-import-cue edit-lockable" title="Nhập nhanh 1 hoặc nhiều file Ảnh, Video, Nhạc thành Cue">
+            <span>Nhập file</span>
+          </button>
+          <div class="cue-icon-tools">
+            <button id="btn-undo" class="icon-tool-btn edit-lockable" title="Hoàn tác (Ctrl+Z)">
+              <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M4.854 2.646a.5.5 0 0 1 0 .708L2.707 5.5H9.5a4.5 4.5 0 1 1 0 9H6a.5.5 0 0 1 0-1h3.5a3.5 3.5 0 1 0 0-7H2.707l2.147 2.146a.5.5 0 1 1-.708.708l-3-3a.5.5 0 0 1 0-.708l3-3a.5.5 0 0 1 .708 0Z"/></svg>
+            </button>
+            <button id="btn-redo" class="icon-tool-btn edit-lockable" title="Làm lại (Ctrl+Y)">
+              <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M11.146 2.646a.5.5 0 0 0 0 .708L13.293 5.5H6.5a4.5 4.5 0 1 0 0 9H10a.5.5 0 0 0 0-1H6.5a3.5 3.5 0 1 1 0-7h6.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708 0Z"/></svg>
+            </button>
+            <button id="btn-dup-cue" class="icon-tool-btn edit-lockable" title="Nhân đôi Cue đang chọn">
+              <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2Zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6ZM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1H2Z"/></svg>
+            </button>
+            <button id="btn-del-cue" class="icon-tool-btn is-danger edit-lockable" title="Xóa Cue đang chọn">
+              <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M6.5 1h3a.5.5 0 0 1 .5.5v1H6v-1a.5.5 0 0 1 .5-.5ZM11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3A1.5 1.5 0 0 0 5 1.5v1H1.5a.5.5 0 0 0 0 1h.538l.853 10.66A2 2 0 0 0 4.885 16h6.23a2 2 0 0 0 1.994-1.84l.853-10.66h.538a.5.5 0 0 0 0-1H11Zm1.958 1-.846 10.58a1 1 0 0 1-.997.92h-6.23a1 1 0 0 1-.997-.92L3.042 3.5h9.916Z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="cue-list" class="cue-list" role="listbox" aria-label="Danh sách Cue"></div>
+      </div>
     </section>
 
-    <!-- ==================== CỘT 2 (GIỮA ~45%): ĐIỀU KHIỂN & PHÁT ==================== -->
+    <div class="fs-col-resizer" data-resize="left" title="Kéo để chỉnh độ rộng cột trái"></div>
+
+    <!-- ==================== CỘT 2 (GIỮA): SÂN KHẤU & ĐIỀU KHIỂN TRỰC TIẾP ==================== -->
     <section class="col-panel col-middle">
       <div class="col-header">
         <span class="col-title">ĐIỀU KHIỂN &amp; PHÁT</span>
@@ -190,33 +232,58 @@
       </div>
 
       <div class="middle-body">
-        <!-- Hàng trên: 2 Màn hình xem trước 16:9 song song -->
-        <div class="monitors-grid">
-          <div class="monitor-card monitor-next">
-            <div class="monitor-head">
-              <span class="badge badge-next">KẾ TIẾP (NEXT)</span>
-              <span class="monitor-sep">—</span>
-              <span id="next-cue-title" class="monitor-title">Chưa chọn</span>
+        <!-- Khu 1: 2 Màn hình xem trước 16:9 song song (cố định trên cùng, không bị đẩy lệch) -->
+        <div class="middle-monitors-section">
+          <div class="monitors-grid">
+            <div class="monitor-card monitor-next">
+              <div class="monitor-head">
+                <span class="badge badge-next">KẾ TIẾP (NEXT)</span>
+                <span class="monitor-sep">—</span>
+                <span id="next-cue-title" class="monitor-title">Chưa chọn</span>
+              </div>
+              <div class="monitor-stage" id="next-preview-box">
+                <div class="preview-empty">Chọn một Cue bên trái</div>
+              </div>
             </div>
-            <div class="monitor-stage" id="next-preview-box">
-              <div class="preview-empty">Chọn một Cue bên trái</div>
-            </div>
-          </div>
 
-          <div class="monitor-card monitor-live">
-            <div class="monitor-head">
-              <span class="badge badge-live">ĐANG CHẠY (LIVE)</span>
-              <span class="monitor-sep">—</span>
-              <span id="live-cue-title" class="monitor-title">Chưa phát</span>
-              <span id="live-countdown" class="countdown-mono">00:00:00</span>
-            </div>
-            <div class="monitor-stage" id="live-preview-box">
-              <div class="preview-empty">Màn hình LED đang chờ</div>
+            <div class="monitor-card monitor-live">
+              <div class="monitor-head">
+                <span class="badge badge-live">ĐANG CHẠY (LIVE)</span>
+                <span class="monitor-sep">—</span>
+                <span id="live-cue-title" class="monitor-title">Chưa phát</span>
+                <span id="live-countdown" class="countdown-mono">00:00:00</span>
+              </div>
+              <div class="monitor-stage" id="live-preview-box">
+                <div class="preview-empty">Màn hình LED đang chờ</div>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Giữa: Nút GO khổng lồ bên trái + Cột 4 nút chức năng bên phải -->
+        <!-- Khu 2: Các điều khiển và thuộc tính bên dưới (thẻ div cuộn riêng biệt) -->
+        <div class="middle-controls-section">
+          <!-- Hàng 2: VMIX SWITCHER STRIP (T-Bar + Cut/Fade/Wipe/FTB + OV1..4) -->
+        <div id="vmix-switcher-strip" class="vmix-switcher-strip">
+          <div class="tbar-group" title="Thanh gạt chuyển cảnh thủ công T-Bar (0 → 100%)">
+            <span class="switcher-lbl">T-BAR</span>
+            <input type="range" id="tbar-slider" class="tbar-slider" min="0" max="100" value="0">
+            <span id="tbar-pct" class="mono-val tbar-pct">0%</span>
+          </div>
+          <div class="switcher-btn-group">
+            <button id="btn-sw-cut" class="btn btn-sm btn-sw" title="Chuyển cảnh tức thì (Phím C)">CUT</button>
+            <button id="btn-sw-fade" class="btn btn-sm btn-sw" title="Mờ chéo sang Cue kế tiếp">FADE</button>
+            <button id="btn-sw-wipe" class="btn btn-sm btn-sw" title="Gạt cảnh Wipe sang Cue kế tiếp">WIPE</button>
+            <button id="btn-sw-ftb" class="btn btn-sm btn-sw-ftb" title="Fade To Black / Đen màn LED">FTB</button>
+          </div>
+          <div class="switcher-ov-group">
+            <button id="btn-sw-ov1" class="btn btn-sm btn-ov" data-ov="1" title="Bật/tắt Lower Third (Alt+1)">OV1</button>
+            <button id="btn-sw-ov2" class="btn btn-sm btn-ov" data-ov="2" title="Bật/tắt Logo góc (Alt+2)">OV2</button>
+            <button id="btn-sw-ov3" class="btn btn-sm btn-ov" data-ov="3" title="Bật/tắt Đồng hồ (Alt+3)">OV3</button>
+            <button id="btn-sw-ov4" class="btn btn-sm btn-ov" data-ov="4" title="Bật/tắt Chữ chạy (Alt+4)">OV4</button>
+          </div>
+        </div>
+
+        <!-- Hàng 3: Nút GO khổng lồ bên trái + Cột 4 nút chức năng bên phải -->
         <div class="transport-deck">
           <button id="btn-go" class="btn-go">
             <span class="go-main">GO</span>
@@ -239,22 +306,7 @@
           </div>
         </div>
 
-        <!-- BẢNG 6 NÚT VUÔNG HIỆU ỨNG ÂM THANH NHANH (SFX SOUND PADS) -->
-        <div class="sfx-launchpad-panel">
-          <div class="sfx-panel-head">
-            <div class="sfx-panel-title-group">
-              <span class="sfx-panel-title">BẢNG HIỆU ỨNG NHANH (SFX PAD)</span>
-              <span id="sfx-hotkey-hint" class="lbl-muted">Phím tắt: F1 – F6</span>
-            </div>
-            <div class="sfx-panel-actions">
-              <button id="btn-stop-sfx" class="btn btn-sm" title="Ngắt mượt các tiếng hiệu ứng đang phát (như trống hồi)">⏹ Ngắt SFX</button>
-              <button id="btn-sfx-settings" class="btn btn-sm btn-fx edit-lockable" title="Cài đặt tệp âm thanh, tên và phím tắt cho cả 6 nút hiệu ứng">⚙ Cài đặt SFX</button>
-            </div>
-          </div>
-          <div id="sfx-pads" class="sfx-square-grid"></div>
-        </div>
-
-        <!-- Dưới: Media Waveform & Thanh trượt âm lượng kèm đồng hồ mức tín hiệu -->
+        <!-- Hàng 5: Media Waveform & Thanh trượt âm lượng + 3-Band EQ Meters -->
         <div class="media-console">
           <div class="track-header-row">
             <div class="track-title-wrap">
@@ -262,6 +314,11 @@
               <span id="track-name" class="track-name">Chưa phát nhạc</span>
             </div>
             <div class="track-metrics">
+              <div class="band-meters-mini" title="Mức năng lượng 3 dải tần Bass / Mid / High">
+                <span class="band-chip">B<span class="band-track"><i id="band-meter-bass" class="band-fill band-bass"></i></span></span>
+                <span class="band-chip">M<span class="band-track"><i id="band-meter-mid" class="band-fill band-mid"></i></span></span>
+                <span class="band-chip">H<span class="band-track"><i id="band-meter-high" class="band-fill band-high"></i></span></span>
+              </div>
               <span id="track-time" class="track-time">00:00 / 00:00</span>
               <span class="beat-pill">
                 <span id="beat-lamp" class="beat-lamp"></span>
@@ -291,10 +348,13 @@
             </div>
           </div>
         </div>
+        </div>
       </div>
     </section>
 
-    <!-- ==================== CỘT 3 (PHẢI ~30%): THUỘC TÍNH CUE ==================== -->
+    <div class="fs-col-resizer" data-resize="right" title="Kéo để chỉnh độ rộng cột phải"></div>
+
+    <!-- ==================== CỘT 3 (PHẢI): THUỘC TÍNH CUE ==================== -->
     <section id="editor-panel" class="col-panel col-right">
       <div class="col-header">
         <span id="editing-cue-badge" class="col-title">Thuộc tính Cue</span>
@@ -302,10 +362,11 @@
       </div>
 
       <div class="inspector-tabs">
-        <button class="tab-btn active" data-tab="tab-general">Chung &amp; Hình LED</button>
-        <button class="tab-btn" data-tab="tab-audio">Nhạc &amp; Cắt đoạn</button>
-        <button class="tab-btn" data-tab="tab-fx">Hiệu ứng (FX)</button>
-        <button class="tab-btn" data-tab="tab-text">Chữ trên LED</button>
+        <button class="tab-btn active" data-tab="tab-general">Chung &amp; Hình</button>
+        <button class="tab-btn" data-tab="tab-audio">Nhạc &amp; Cắt</button>
+        <button class="tab-btn" data-tab="tab-fx">Hiệu ứng FX</button>
+        <button class="tab-btn" data-tab="tab-text">Chữ LED</button>
+        <button class="tab-btn" data-tab="tab-ledsync">LED Beat/DMX</button>
       </div>
 
       <div id="editor-empty" class="editor-empty">
@@ -321,11 +382,20 @@
           </label>
 
           <label class="field">
-            <span>Ghi chú vận hành (không hiện lên LED)</span>
+            <span>Ghi chú vận hành / MC (hiện trên Stage Display)</span>
             <textarea id="ed-note" class="edit-lockable-input" rows="2" placeholder="Ví dụ: Đợi MC giới thiệu xong mới bấm GO"></textarea>
           </label>
 
-          <div class="field">
+          <label class="field">
+            <span>Loại nguồn hình lên LED</span>
+            <select id="ed-source-type" class="edit-lockable-input">
+              <option value="media">Tệp Ảnh / Video (File Media)</option>
+              <option value="camera">Camera trực tiếp / Capture Card</option>
+              <option value="generator">Đồ họa VJ tự tạo (VJ Generator)</option>
+            </select>
+          </label>
+
+          <div id="wrap-vis-media" class="field">
             <span>File ảnh / video lên LED (hỗ trợ kéo thả)</span>
             <input type="hidden" id="ed-vis">
             <div id="dropzone-vis" class="media-dropzone media-dropzone-vis edit-lockable-zone" tabindex="0" role="button" title="Kéo thả file Ảnh hoặc Video từ máy tính vào đây, hoặc bấm để chọn file">
@@ -343,6 +413,26 @@
             </div>
           </div>
 
+          <div id="wrap-vis-camera" class="field hidden">
+            <span>Chọn nguồn Camera / HDMI Capture</span>
+            <div class="popover-row">
+              <select id="ed-camera-id" class="ctrl-select grow edit-lockable-input"></select>
+              <button type="button" id="btn-refresh-cameras" class="btn btn-sm btn-fx">Làm mới</button>
+            </div>
+          </div>
+
+          <div id="wrap-vis-generator" class="field hidden">
+            <span>Chọn hiệu ứng đồ họa VJ Generator</span>
+            <select id="ed-generator" class="ctrl-select edit-lockable-input">
+              <option value="laser-beams">Chùm tia Laser sân khấu (Laser Beams)</option>
+              <option value="spectrum-bars">Cột sóng phổ nhạc Neon (Spectrum Bars)</option>
+              <option value="strobe-matrix">Ma trận LED Matrix (Strobe Matrix)</option>
+              <option value="pulse-rings">Vòng sóng xung kích (Pulse Rings)</option>
+              <option value="cyber-grid">Lưới không gian Cyber (Cyber Grid)</option>
+              <option value="plasma-wave">Sóng Plasma đa sắc (Plasma Wave)</option>
+            </select>
+          </div>
+
           <div class="form-grid-2">
             <label class="field">
               <span>Chuyển cảnh</span>
@@ -350,9 +440,15 @@
                 <option value="fade">Mờ chéo (Fade)</option>
                 <option value="cut">Cắt thẳng (Cut)</option>
                 <option value="black">Qua màn đen (Black)</option>
-                <option value="slide-left">Trượt sang trái (Slide)</option>
-                <option value="slide-right">Trượt sang phải (Slide)</option>
+                <option value="slide-left">Trượt sang trái (Slide Left)</option>
+                <option value="slide-right">Trượt sang phải (Slide Right)</option>
                 <option value="zoom">Thu phóng (Zoom)</option>
+                <option value="wipe-left">Gạt màn trái (Wipe Left)</option>
+                <option value="wipe-right">Gạt màn phải (Wipe Right)</option>
+                <option value="wipe-up">Gạt lên trên (Wipe Up)</option>
+                <option value="circle-iris">Mở vòng tròn (Circle Iris)</option>
+                <option value="blur-dissolve">Nhòe chuyển cảnh (Blur Dissolve)</option>
+                <option value="flash-cut">Chớp sáng cắt (Flash Cut)</option>
               </select>
             </label>
 
@@ -381,7 +477,7 @@
             </label>
           </div>
 
-          <!-- Hộp Âm thanh gốc từ Video: gạt OFF sẽ xám và khóa thanh âm lượng video -->
+          <!-- Hộp Âm thanh gốc từ Video -->
           <div class="toggle-box">
             <label class="switch-row">
               <span class="switch-label switch-label-strong">Âm thanh gốc từ Video</span>
@@ -445,7 +541,6 @@
             </label>
           </div>
 
-          <!-- Khung thông số bài nhạc (tự xám & khóa khi Cue chưa gắn file nhạc) -->
           <div id="group-audio-track" class="section-lock-body">
             <label class="field">
               <span>Âm lượng bài (<b id="ed-vol-val">100</b>%)</span>
@@ -486,7 +581,6 @@
 
         <!-- TAB 3: HIỆU ỨNG (FX) -->
         <div id="tab-fx" class="tab-pane">
-          <!-- KHỐI 1: HIỆU ỨNG GIẬT THEO BEAT -->
           <div class="fx-subbox">
             <label class="switch-row">
               <span class="fx-subbox-title">Hiệu ứng giật theo beat</span>
@@ -507,6 +601,7 @@
                   <span>Nguồn beat</span>
                   <select id="fx-src" class="ctrl-select">
                     <option value="auto">Nhạc phần mềm (Tự dò DSP)</option>
+                    <option value="video">Tiếng video đang phát (Tự dò DSP)</option>
                     <option value="ext">Trực tiếp từ Mixer / DJ (Line-In)</option>
                     <option value="bpm">Theo nhịp BPM cố định</option>
                   </select>
@@ -521,7 +616,6 @@
                 </label>
               </div>
 
-              <!-- CẤU HÌNH NHANH KHI CHỌN NGUỒN MIXER / DJ -->
               <div id="fx-ext-controls" class="ext-dj-box hidden">
                 <div class="fx-subbox-head">
                   <span class="ext-dj-badge">🎧 LIVE MIXER / DJ INPUT</span>
@@ -537,6 +631,18 @@
                 </label>
                 <div class="lbl-muted" style="font-size:10.5px">
                   Chỉ phân tích nhịp cho màn LED, không phát lặp ra loa. Chỉnh Input Gain sao cho vạch tín hiệu nhảy xanh–vàng theo tiếng bass DJ.
+                </div>
+              </div>
+
+              <div id="fx-video-controls" class="ext-dj-box video-dsp-box hidden">
+                <div class="fx-subbox-head">
+                  <span class="ext-dj-badge">🎬 TIẾNG VIDEO ĐANG PHÁT (DSP)</span>
+                  <div class="vu-meter" id="fx-video-vu-meter" style="width:92px"></div>
+                </div>
+                <div id="fx-video-status" class="lbl-muted video-dsp-status">Đang kiểm tra trạng thái video...</div>
+                <div id="fx-video-actions" class="btn-row-tight hidden">
+                  <button type="button" id="btn-fx-enable-vsound" class="btn btn-sm btn-fx hidden">Bật tiếng gốc Video</button>
+                  <button type="button" id="btn-fx-go-selected" class="btn btn-sm btn-emerald hidden">▶ Phát Cue này (GO)</button>
                 </div>
               </div>
 
@@ -585,7 +691,6 @@
                 </label>
               </div>
 
-              <!-- Phân tích bass DSP nằm trong khối Beat FX -->
               <div class="fx-inner-divider"></div>
               <div class="fx-subbox-head">
                 <span class="switch-label-strong">Phân tích bass (DSP)</span>
@@ -610,19 +715,18 @@
                 </label>
               </div>
               <label class="slider-item" id="wrap-fx-delay">
-                <span>Bù trễ nhạc phần mềm (<b id="fx-delay-ms-v">50</b> ms) — tăng nếu hình chậm hơn tiếng</span>
+                <span>Bù trễ âm thanh (<b id="fx-delay-ms-v">50</b> ms) — tăng nếu hình chậm hơn tiếng</span>
                 <input type="range" id="fx-delay-ms" min="0" max="200" step="5" value="50">
               </label>
               <div class="bass-chart-wrap">
                 <div class="lbl-muted" style="font-size:10.5px;margin-bottom:3px">
-                  4s gần nhất: <span style="color:#38bdf8">━━ O[n]</span> · <span style="color:#f59e0b">- - T</span> · <span style="color:#ef4444">| Beat</span>
+                  4s gần nhất: <span style="color:#ff3da8">━━ O[n]</span> · <span style="color:#f59e0b">- - T</span> · <span style="color:#ef4444">| Beat</span>
                 </div>
                 <canvas id="bass-chart-canvas" width="420" height="64"></canvas>
               </div>
             </div>
           </div>
 
-          <!-- KHỐI 2: RUNG NHẸ LIÊN TỤC (IDLE SHAKE) -->
           <div class="fx-subbox">
             <label class="switch-row">
               <span class="fx-subbox-title">Rung nhẹ liên tục (Idle Shake)</span>
@@ -674,7 +778,6 @@
             </div>
           </div>
 
-          <!-- KHỐI 3: CHỐNG LỘ VIỀN ĐEN (DÙNG CHUNG KHI BẬT BEAT HOẶC RUNG NỀN) -->
           <div id="group-overscan-fx" class="toggle-box section-lock-body">
             <label class="switch-row">
               <span class="switch-label">Phóng nhẹ khung hình chống lộ viền đen (Overscan)</span>
@@ -733,13 +836,794 @@
             </div>
           </div>
         </div>
+
+        <!-- TAB 5: CHỚP LED THEO BEAT & DMX -->
+        <div id="tab-ledsync" class="tab-pane">
+          <div class="fx-subbox">
+            <label class="switch-row">
+              <span class="fx-subbox-title">Chớp LED sân khấu theo Beat (Cue này)</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="ledsync-on">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+
+            <div id="group-ledsync-body" class="section-lock-body">
+              <div class="form-grid-2">
+                <label class="field">
+                  <span>Chế độ chớp LED</span>
+                  <select id="ledsync-mode">
+                    <option value="off">Tắt (Off)</option>
+                    <option value="flash">Flash toàn màn</option>
+                    <option value="wash">Wash sân khấu</option>
+                    <option value="edge-chase">Chạy viền (Edge Chase)</option>
+                    <option value="quadrant">Chớp 4 góc (Quadrant)</option>
+                    <option value="matrix-bars">Cột Matrix (Matrix Bars)</option>
+                    <option value="invert-hit">Âm bản theo Beat (Invert Hit)</option>
+                    <option value="blinder">Đèn Blinder sân khấu</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Bảng màu (Palette)</span>
+                  <select id="ledsync-palette">
+                    <option value="cyber">Cyber (Cyan / Pink)</option>
+                    <option value="white">Trắng tinh (White)</option>
+                    <option value="fire">Lửa / Đỏ cam (Fire)</option>
+                    <option value="rainbow">Cầu vồng (Rainbow)</option>
+                    <option value="gala">Gala Vàng / Trắng</option>
+                    <option value="ice">Băng giá (Ice Blue)</option>
+                    <option value="custom">Tự chọn 2 màu A/B</option>
+                  </select>
+                </label>
+              </div>
+
+              <div id="ledsync-custom-colors" class="form-grid-2">
+                <label class="field">
+                  <span>Màu A</span>
+                  <input type="color" id="ledsync-color-a" value="#00d2ff">
+                </label>
+                <label class="field">
+                  <span>Màu B</span>
+                  <input type="color" id="ledsync-color-b" value="#ff007f">
+                </label>
+              </div>
+
+              <div class="form-grid-2">
+                <label class="field">
+                  <span>Nguồn kích hoạt</span>
+                  <select id="ledsync-trigger">
+                    <option value="beat">Theo Beat</option>
+                    <option value="bass">Theo Bass</option>
+                    <option value="mid">Theo Mid</option>
+                    <option value="high">Theo High</option>
+                    <option value="all">Toàn dải (All)</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Chia nhịp (Divider)</span>
+                  <select id="ledsync-divider">
+                    <option value="0.25">¼x (Chậm 4 nhịp)</option>
+                    <option value="0.5">½x (Nửa nhịp)</option>
+                    <option value="1">1x (Mỗi nhịp)</option>
+                    <option value="2">2x (Nhân đôi)</option>
+                    <option value="4">4x (Nhanh gấp 4)</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="fx-sliders-grid-2">
+                <label class="slider-item">
+                  <span>Cường độ: <b id="ledsync-intensity-v">80</b>%</span>
+                  <input type="range" id="ledsync-intensity" min="0" max="100" value="80">
+                </label>
+                <label class="slider-item">
+                  <span>Độ tắt dần: <b id="ledsync-decay-v">180</b>ms</span>
+                  <input type="range" id="ledsync-decay" min="40" max="800" step="10" value="180">
+                </label>
+                <label class="slider-item">
+                  <span>Độ dày viền: <b id="ledsync-edge-v">10</b>%</span>
+                  <input type="range" id="ledsync-edge" min="2" max="40" value="10">
+                </label>
+                <label class="field">
+                  <span>Hòa trộn (Blend)</span>
+                  <select id="ledsync-blend">
+                    <option value="plus-lighter">Cộng sáng (Plus Lighter)</option>
+                    <option value="screen">Màn hình (Screen)</option>
+                    <option value="normal">Thường (Normal)</option>
+                    <option value="lighten">Làm sáng (Lighten)</option>
+                    <option value="overlay">Phủ lớp (Overlay)</option>
+                    <option value="color-dodge">Cháy sáng (Color Dodge)</option>
+                    <option value="hard-light">Hard Light</option>
+                    <option value="difference">Difference</option>
+                    <option value="multiply">Multiply</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Chế độ đèn DMX sân khấu</span>
+                <select id="ledsync-dmx-mode">
+                  <option value="beat-flash">Nháy theo Beat (Beat Flash)</option>
+                  <option value="chase">Chạy đuổi từng đèn (Chase)</option>
+                  <option value="rainbow-beat">Đổi màu cầu vồng (Rainbow Beat)</option>
+                  <option value="bass-dimmer">Mờ sáng theo Bass (Bass Dimmer)</option>
+                  <option value="strobe">Chớp nhanh liên tục (Strobe)</option>
+                  <option value="solid">Sáng đều (Solid)</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="fx-inner-divider"></div>
+            <div class="ledsync-actions-row">
+              <button id="btn-ledsync-apply-all" class="btn btn-sm btn-fx edit-lockable">Áp dụng cho tất cả Cue</button>
+              <label class="switch-row" title="Ghi đè cấu hình Chớp LED hiện tại cho mọi Cue khi chạy live">
+                <span class="switch-label">Đồng bộ tức thì</span>
+                <span class="switch-ui">
+                  <input type="checkbox" id="chk-ledsync-global">
+                  <span class="switch-slider"></span>
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
+  <!-- ==================== NGĂN KÉO DƯỚI ĐÁY KIỂU FREESHOW (BOTTOM DRAWER · CTRL+D) ==================== -->
+  <div id="fs-drawer-resizer" class="fs-drawer-resizer" title="Kéo lên/xuống để chỉnh chiều cao Ngăn kéo (Drawer)"></div>
+  <section id="fs-drawer" class="fs-drawer">
+    <div class="fs-drawer-bar" role="tablist" aria-label="Ngăn kéo công cụ FreeShow">
+      <div class="fs-drawer-tabs">
+        <button type="button" id="perf-tab-sfx" class="drawer-tab-btn active" data-drawer-tab="perf-pane-sfx">⚡ SFX Pads (F1–F6)</button>
+        <button type="button" id="perf-tab-led" class="drawer-tab-btn" data-drawer-tab="perf-pane-led">💡 Chớp LED &amp; DMX</button>
+        <button type="button" id="perf-tab-fx" class="drawer-tab-btn" data-drawer-tab="perf-pane-fx">🎛 Live FX Rack</button>
+        <button type="button" id="left-tab-vj" class="drawer-tab-btn" data-drawer-tab="left-pane-vj">🎬 VJ Deck (3 Tầng)</button>
+        <button type="button" id="left-tab-overlays" class="drawer-tab-btn" data-drawer-tab="left-pane-overlays">📺 Overlays &amp; Stage</button>
+      </div>
+      <div class="fs-drawer-right">
+        <span class="drawer-kbd-hint">Ctrl+D</span>
+        <button type="button" id="btn-drawer-toggle" class="drawer-toggle-btn" title="Thu gọn / Mở rộng ngăn kéo (Ctrl+D)">▾ Thu gọn</button>
+      </div>
+    </div>
+
+    <div id="fs-drawer-body" class="fs-drawer-body">
+      <!-- TAB A: SFX PADS (F1-F6) -->
+      <div id="perf-pane-sfx" class="drawer-pane active">
+        <div class="sfx-panel-head">
+          <div class="sfx-panel-title-group">
+            <span class="sfx-panel-title">BẢNG HIỆU ỨNG NHANH (SFX PAD)</span>
+            <span id="sfx-hotkey-hint" class="lbl-muted">Phím tắt: F1 – F6</span>
+          </div>
+          <div class="sfx-panel-actions">
+            <button id="btn-stop-sfx" class="btn btn-sm" title="Ngắt mượt các tiếng hiệu ứng đang phát (như trống hồi)">⏹ Ngắt SFX</button>
+            <button id="btn-sfx-settings" class="btn btn-sm btn-fx edit-lockable" title="Cài đặt tệp âm thanh, tên và phím tắt cho cả 6 nút hiệu ứng">⚙ Cài đặt SFX</button>
+          </div>
+        </div>
+        <div id="sfx-pads" class="sfx-square-grid"></div>
+      </div>
+
+      <!-- TAB B: CHỚP LED & VJ + NHỊP BEAT + DMX STAGE VISUALIZER -->
+      <div id="perf-pane-led" class="drawer-pane">
+        <div class="led-drawer-grid">
+          <div class="led-drawer-col">
+            <div id="led-quick-presets" class="led-presets-grid"></div>
+            <div class="led-controls-strip">
+              <div id="led-div-group" class="led-div-group" title="Tần suất chớp theo nhịp Beat">
+                <button class="btn btn-sm led-div-btn" data-div="0.25">¼x</button>
+                <button class="btn btn-sm led-div-btn" data-div="0.5">½x</button>
+                <button class="btn btn-sm led-div-btn active" data-div="1">1x</button>
+                <button class="btn btn-sm led-div-btn" data-div="2">2x</button>
+                <button class="btn btn-sm led-div-btn" data-div="4">4x</button>
+              </div>
+              <select id="led-quick-mode" class="ctrl-select led-quick-sel" title="Kiểu chớp LED">
+                <option value="off">Tắt chớp</option>
+                <option value="flash">Flash toàn màn</option>
+                <option value="wash">Wash sân khấu</option>
+                <option value="edge-chase">Chạy viền (Edge Chase)</option>
+                <option value="quadrant">Chớp 4 góc</option>
+                <option value="matrix-bars">Cột Matrix</option>
+                <option value="invert-hit">Âm bản (Invert Hit)</option>
+                <option value="blinder">Đèn Blinder</option>
+              </select>
+              <select id="led-quick-trigger" class="ctrl-select led-quick-sel" title="Dải kích hoạt nhịp">
+                <option value="beat">Theo Beat</option>
+                <option value="bass">Theo Bass</option>
+                <option value="mid">Theo Mid</option>
+                <option value="high">Theo High</option>
+                <option value="all">Toàn dải</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="led-drawer-col">
+            <div class="led-momentary-grid">
+              <button id="btn-mom-flash" class="btn btn-mom btn-mom-flash" title="Đánh Flash tức thì (Phím G hoặc Shift+Space)">⚡ FLASH [G]</button>
+              <button id="btn-mom-strobe" class="btn btn-mom btn-mom-strobe" title="Giữ để chớp Strobe 16Hz liên tục (Giữ phím S)">💥 STROBE HOLD [S]</button>
+              <button id="btn-mom-invert" class="btn btn-mom btn-mom-invert" title="Giữ để đảo âm bản sân khấu">🔄 INVERT</button>
+              <button id="btn-mom-drop" class="btn btn-mom btn-mom-drop" title="Giữ để bung Drop Burst đa màu + viền">🔥 DROP BURST</button>
+            </div>
+            <div class="led-clock-bar">
+              <div class="beat-bar-dots" title="Nhịp 4 phách trong ô nhịp">
+                <span id="beat-dot-0" class="beat-dot">1</span>
+                <span id="beat-dot-1" class="beat-dot">2</span>
+                <span id="beat-dot-2" class="beat-dot">3</span>
+                <span id="beat-dot-3" class="beat-dot">4</span>
+              </div>
+              <button id="btn-perf-tap-bpm" class="btn btn-sm btn-fx">TAP [P]</button>
+              <label class="chk-inline">
+                <input type="checkbox" id="chk-auto-bpm">
+                <span>Auto-BPM</span>
+              </label>
+              <div class="btn-row-tight">
+                <button id="btn-phase-nudge-back" class="btn btn-sm" title="Lùi pha beat -10ms">-10ms</button>
+                <button id="btn-phase-resync" class="btn btn-sm" title="Đặt lại phách 1 ngay lúc này">Sync</button>
+                <button id="btn-phase-nudge-fwd" class="btn btn-sm" title="Tới pha beat +10ms">+10ms</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="dmx-stage-visualizer" class="dmx-stage-visualizer" title="Mô phỏng 8 đèn Par LED DMX sân khấu theo thời gian thực"></div>
+      </div>
+
+      <!-- TAB C: LIVE FX RACK (MASTER FX) -->
+      <div id="perf-pane-fx" class="drawer-pane">
+        <div class="mfx-head">
+          <span class="sfx-panel-title">MASTER LIVE FX RACK (TOÀN MÀN LED)</span>
+          <button id="btn-reset-master-fx" class="btn btn-sm">↺ Reset FX</button>
+        </div>
+        <div class="mfx-grid">
+          <label class="slider-item">
+            <span>Dimmer: <b id="mfx-dimmer-v">100</b>%</span>
+            <input type="range" id="mfx-dimmer" min="0" max="100" value="100">
+          </label>
+          <label class="slider-item">
+            <span>Tương phản: <b id="mfx-contrast-v">100</b>%</span>
+            <input type="range" id="mfx-contrast" min="50" max="200" value="100">
+          </label>
+          <label class="slider-item">
+            <span>Bão hòa màu: <b id="mfx-saturate-v">100</b>%</span>
+            <input type="range" id="mfx-saturate" min="0" max="250" value="100">
+          </label>
+          <label class="slider-item">
+            <span>Xoay màu Hue: <b id="mfx-hue-v">0</b>°</span>
+            <input type="range" id="mfx-hue" min="-180" max="180" value="0">
+          </label>
+          <div class="mfx-slider-link">
+            <label class="slider-item grow">
+              <span>RGB Split: <b id="mfx-rgbsplit-v">0</b></span>
+              <input type="range" id="mfx-rgbsplit" min="0" max="40" value="0">
+            </label>
+            <label class="chk-inline"><input type="checkbox" id="mfx-rgb-beat"><span>Beat</span></label>
+          </div>
+          <div class="mfx-slider-link">
+            <label class="slider-item grow">
+              <span>Glitch: <b id="mfx-glitch-v">0</b></span>
+              <input type="range" id="mfx-glitch" min="0" max="100" value="0">
+            </label>
+            <label class="chk-inline"><input type="checkbox" id="mfx-glitch-beat"><span>Beat</span></label>
+          </div>
+          <label class="slider-item">
+            <span>Tối 4 góc (Vignette): <b id="mfx-vignette-v">0</b>%</span>
+            <input type="range" id="mfx-vignette" min="0" max="100" value="0">
+          </label>
+          <label class="slider-item">
+            <span>Pixelate: <b id="mfx-pixelate-v">0</b></span>
+            <input type="range" id="mfx-pixelate" min="0" max="40" value="0">
+          </label>
+          <label class="field">
+            <span>Gương / Kính vạn hoa</span>
+            <select id="mfx-mirror">
+              <option value="none">Bình thường</option>
+              <option value="mirror-h">Lật đối xứng ngang</option>
+              <option value="mirror-v">Lật đối xứng dọc</option>
+              <option value="quad">4 góc (Quad)</option>
+              <option value="kaleido">Kính vạn hoa (Kaleido)</option>
+            </select>
+          </label>
+          <label class="switch-row mfx-invert-box">
+            <span class="switch-label">Đảo màu (Invert)</span>
+            <span class="switch-ui">
+              <input type="checkbox" id="mfx-invert">
+              <span class="switch-slider"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <!-- TAB D: RESOLUME 3-LAYER VJ DECK -->
+      <div id="left-pane-vj" class="drawer-pane">
+        <div class="vj-topbar">
+          <div id="vj-deck-tabs" class="vj-deck-tabs">
+            <button id="vj-deck-btn-0" class="btn btn-sm vj-deck-btn active" data-vj-deck="0">Deck A</button>
+            <button id="vj-deck-btn-1" class="btn btn-sm vj-deck-btn" data-vj-deck="1">Deck B</button>
+            <button id="vj-deck-btn-2" class="btn btn-sm vj-deck-btn" data-vj-deck="2">Deck C</button>
+          </div>
+          <div id="vj-col-fire-row" class="vj-col-fire-row">
+            <button id="vj-col-btn-0" class="btn btn-sm vj-col-btn" data-vj-col="0">▶ Cột 1</button>
+            <button id="vj-col-btn-1" class="btn btn-sm vj-col-btn" data-vj-col="1">▶ Cột 2</button>
+            <button id="vj-col-btn-2" class="btn btn-sm vj-col-btn" data-vj-col="2">▶ Cột 3</button>
+            <button id="vj-col-btn-3" class="btn btn-sm vj-col-btn" data-vj-col="3">▶ Cột 4</button>
+          </div>
+          <button id="btn-vj-clear-all" class="btn btn-sm btn-danger-soft" title="Tắt hết tất cả clip trên 3 layer VJ">Tắt hết layer</button>
+        </div>
+        <div id="vj-layers-host" class="vj-layers-host"></div>
+      </div>
+
+      <!-- TAB E: VMIX 4 OVERLAYS & TIN NHẮN STAGE DISPLAY -->
+      <div id="left-pane-overlays" class="drawer-pane">
+        <div class="overlays-scroll">
+          <!-- Tin nhắn gửi MC / Stage Display -->
+          <div class="ov-card ov-stage-card">
+            <div class="ov-card-head">
+              <span class="ov-card-title">📢 Tin nhắn gửi MC / Stage Display</span>
+              <button id="btn-stage-msg-clear" class="btn btn-sm">Xóa nhanh</button>
+            </div>
+            <textarea id="stage-msg-input" rows="2" placeholder="Ví dụ: MC kéo dài 2 phút chờ khách VIP vào chỗ..."></textarea>
+            <div class="ov-row-actions">
+              <span class="lbl-muted">Đồng bộ lên màn Stage &amp; /stage LAN</span>
+              <button id="btn-stage-msg-send" class="btn btn-sm btn-fx">Gửi Stage</button>
+            </div>
+          </div>
+
+          <!-- OV1: Lower Third -->
+          <div class="ov-card">
+            <label class="switch-row">
+              <span class="ov-card-title">OV1 · Bảng tên Lower Third</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="ov1-active">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <input type="text" id="ov1-title" placeholder="Tiêu đề chính (VD: Ông Nguyễn Văn A)">
+            <input type="text" id="ov1-subtitle" placeholder="Chức danh / phụ đề (VD: Tổng Giám Đốc)">
+            <div class="form-grid-2">
+              <label class="field">
+                <span>Giao diện</span>
+                <select id="ov1-theme">
+                  <option value="modern">Hiện đại (Modern)</option>
+                  <option value="neon">Neon Cyber</option>
+                  <option value="corporate">Doanh nghiệp (Corporate)</option>
+                  <option value="breaking">Tin nóng (Breaking)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Vị trí</span>
+                <select id="ov1-pos">
+                  <option value="bottom-left">Dưới trái</option>
+                  <option value="bottom-center">Dưới giữa</option>
+                  <option value="bottom-right">Dưới phải</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Màu nhấn</span>
+                <input type="color" id="ov1-accent" value="#f0008c">
+              </label>
+              <label class="field">
+                <span>Tự ẩn (giây, 0=tắt)</span>
+                <input type="number" id="ov1-autohide" min="0" max="120" step="1" value="0">
+              </label>
+            </div>
+          </div>
+
+          <!-- OV2: Corner Logo -->
+          <div class="ov-card">
+            <label class="switch-row">
+              <span class="ov-card-title">OV2 · Logo Góc Màn Hình</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="ov2-active">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <div class="ov-logo-row">
+              <span id="ov2-path-label" class="lbl-muted grow">Chưa chọn logo</span>
+              <button id="btn-ov2-pick" class="btn btn-sm btn-fx">Chọn ảnh</button>
+              <button id="btn-ov2-clear" class="btn btn-sm">Bỏ</button>
+            </div>
+            <div class="form-grid-2">
+              <label class="field">
+                <span>Góc đặt</span>
+                <select id="ov2-pos">
+                  <option value="top-right">Trên phải</option>
+                  <option value="top-left">Trên trái</option>
+                  <option value="bottom-right">Dưới phải</option>
+                  <option value="bottom-left">Dưới trái</option>
+                </select>
+              </label>
+              <label class="slider-item">
+                <span>Kích cỡ: <b id="ov2-scale-v">14</b>%</span>
+                <input type="range" id="ov2-scale" min="4" max="40" value="14">
+              </label>
+              <label class="slider-item">
+                <span>Độ mờ: <b id="ov2-opacity-v">90</b>%</span>
+                <input type="range" id="ov2-opacity" min="10" max="100" value="90">
+              </label>
+              <label class="slider-item">
+                <span>Canh lề: <b id="ov2-margin-v">28</b>px</span>
+                <input type="range" id="ov2-margin" min="0" max="120" value="28">
+              </label>
+            </div>
+          </div>
+
+          <!-- OV3: Timer / Countdown -->
+          <div class="ov-card">
+            <label class="switch-row">
+              <span class="ov-card-title">OV3 · Đồng hồ / Đếm ngược</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="ov3-active">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <div class="ov-timer-bar">
+              <span id="ov3-timer-preview" class="mono-val ov-timer-readout">05:00</span>
+              <div class="btn-row-tight">
+                <button id="btn-ov3-start" class="btn btn-sm btn-emerald">▶ Chạy</button>
+                <button id="btn-ov3-pause" class="btn btn-sm">⏸ Tạm dừng</button>
+                <button id="btn-ov3-reset" class="btn btn-sm">↺ Đặt lại</button>
+              </div>
+            </div>
+            <div class="form-grid-2">
+              <label class="field">
+                <span>Chế độ</span>
+                <select id="ov3-mode">
+                  <option value="countdown">Đếm ngược (Countdown)</option>
+                  <option value="clock">Đồng hồ thực (Clock)</option>
+                  <option value="countup">Đếm tăng (Countup)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Thời lượng (giây)</span>
+                <input type="number" id="ov3-duration" min="5" max="86400" step="5" value="300">
+              </label>
+              <label class="field">
+                <span>Mục tiêu (HH:MM)</span>
+                <input type="text" id="ov3-target" value="20:00" placeholder="20:00">
+              </label>
+              <label class="field">
+                <span>Nhãn hiển thị</span>
+                <input type="text" id="ov3-label" value="ĐẾM NGƯỢC">
+              </label>
+              <label class="field">
+                <span>Vị trí</span>
+                <select id="ov3-pos">
+                  <option value="top-left">Trên trái</option>
+                  <option value="top-right">Trên phải</option>
+                  <option value="bottom-left">Dưới trái</option>
+                  <option value="bottom-right">Dưới phải</option>
+                  <option value="center">Chính giữa</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Cảnh báo đỏ (&lt; giây)</span>
+                <input type="number" id="ov3-warn" min="0" max="600" value="30">
+              </label>
+              <label class="slider-item">
+                <span>Cỡ chữ: <b id="ov3-size-v">46</b>px</span>
+                <input type="range" id="ov3-size" min="20" max="120" value="46">
+              </label>
+              <label class="field">
+                <span>Màu chữ</span>
+                <input type="color" id="ov3-color" value="#ffffff">
+              </label>
+            </div>
+          </div>
+
+          <!-- OV4: Marquee Ticker -->
+          <div class="ov-card">
+            <label class="switch-row">
+              <span class="ov-card-title">OV4 · Chữ chạy chân màn (Ticker)</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="ov4-active">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <textarea id="ov4-text" rows="2" placeholder="Nhập thông báo chạy ngang liên tục..."></textarea>
+            <div class="form-grid-2">
+              <label class="field">
+                <span>Vị trí</span>
+                <select id="ov4-pos">
+                  <option value="bottom">Dưới cùng</option>
+                  <option value="top">Trên cùng</option>
+                </select>
+              </label>
+              <label class="slider-item">
+                <span>Tốc độ: <b id="ov4-speed-v">85</b></span>
+                <input type="range" id="ov4-speed" min="20" max="300" value="85">
+              </label>
+              <label class="slider-item">
+                <span>Cỡ chữ: <b id="ov4-size-v">28</b>px</span>
+                <input type="range" id="ov4-size" min="16" max="80" value="28">
+              </label>
+              <label class="slider-item">
+                <span>Nền mờ: <b id="ov4-bgopacity-v">82</b>%</span>
+                <input type="range" id="ov4-bgopacity" min="0" max="100" value="82">
+              </label>
+              <label class="field">
+                <span>Màu chữ</span>
+                <input type="color" id="ov4-color" value="#ffffff">
+              </label>
+              <label class="field">
+                <span>Màu nền</span>
+                <input type="color" id="ov4-bgcolor" value="#08101c">
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <!-- HỘP THOẠI CẤU HÌNH CLIP VJ (KHÔNG DÙNG window.prompt) -->
+  <div id="vj-clip-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="width:min(520px,92vw)">
+      <div class="modal-head">
+        <h3 id="vj-clip-modal-title">Cấu hình ô Clip VJ</h3>
+        <button id="btn-close-vj-clip" class="btn btn-sm">Đóng</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>Tên hiển thị ô Clip</span>
+          <input type="text" id="vj-clip-name" placeholder="Ví dụ: Laser Drop">
+        </label>
+        <label class="field">
+          <span>Loại nội dung</span>
+          <select id="vj-clip-kind">
+            <option value="empty">Ô trống (Empty)</option>
+            <option value="image">Ảnh (Image)</option>
+            <option value="video">Video (MP4 / WEBM)</option>
+            <option value="generator">Đồ họa VJ tự tạo (Generator)</option>
+            <option value="camera">Camera trực tiếp / Capture</option>
+          </select>
+        </label>
+
+        <div id="vj-clip-media-row" class="field">
+          <span>File Ảnh / Video</span>
+          <div class="popover-row">
+            <input type="text" id="vj-clip-path" class="grow" readonly placeholder="Chưa chọn file...">
+            <button id="btn-vj-clip-pick" class="btn btn-sm btn-fx">Chọn file</button>
+            <button id="btn-vj-clip-clear-file" class="btn btn-sm">Xóa</button>
+          </div>
+        </div>
+
+        <div id="vj-clip-gen-row" class="field hidden">
+          <span>Kiểu đồ họa Generator</span>
+          <select id="vj-clip-generator">
+            <option value="laser-beams">Laser Beams (Tia Laser)</option>
+            <option value="spectrum-bars">Spectrum Bars (Cột phổ nhạc)</option>
+            <option value="strobe-matrix">Strobe Matrix (Ma trận LED)</option>
+            <option value="pulse-rings">Pulse Rings (Vòng xung)</option>
+            <option value="cyber-grid">Cyber Grid (Lưới không gian)</option>
+            <option value="plasma-wave">Plasma Wave (Sóng Plasma)</option>
+          </select>
+        </div>
+
+        <div id="vj-clip-cam-row" class="field hidden">
+          <span>Nguồn Camera</span>
+          <div class="popover-row">
+            <select id="vj-clip-camera" class="ctrl-select grow"></select>
+            <button id="btn-vj-refresh-cam" class="btn btn-sm">Làm mới</button>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <label class="field">
+            <span>Màu chủ đạo (Tint)</span>
+            <input type="color" id="vj-clip-color" value="#00d2ff">
+          </label>
+          <label class="slider-item">
+            <span>Tốc độ phát: <b id="vj-clip-speed-v">1.0</b>x</span>
+            <input type="range" id="vj-clip-speed" min="0.25" max="3" step="0.05" value="1">
+          </label>
+        </div>
+
+        <label class="switch-row">
+          <span class="switch-label">Lặp liên tục (Loop)</span>
+          <span class="switch-ui">
+            <input type="checkbox" id="vj-clip-loop" checked>
+            <span class="switch-slider"></span>
+          </span>
+        </label>
+
+        <label id="vj-clip-vsound-row" class="switch-row">
+          <span class="switch-label">Phát tiếng gốc video</span>
+          <span class="switch-ui">
+            <input type="checkbox" id="vj-clip-vsound" checked>
+            <span class="switch-slider"></span>
+          </span>
+        </label>
+
+        <div class="ov-row-actions">
+          <button id="btn-vj-clip-clear-slot" class="btn btn-sm btn-danger-soft">Xóa sạch ô này</button>
+          <button id="btn-vj-clip-save" class="btn btn-sm btn-emerald">Lưu cấu hình Clip</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HỘP THOẠI DMX ART-NET / sACN & OSC -->
+  <div id="dmx-osc-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="width:min(780px,95vw)">
+      <div class="modal-head">
+        <h3>Mạng DMX Art-Net / sACN &amp; Điều khiển OSC</h3>
+        <button id="btn-close-dmx-modal" class="btn btn-sm">Đóng</button>
+      </div>
+      <div class="modal-body">
+        <div class="tool-section">
+          <label class="switch-row">
+            <h4>1. Xuất DMX512 qua mạng (Art-Net / sACN E1.31)</h4>
+            <span class="switch-ui">
+              <input type="checkbox" id="dmx-enabled">
+              <span class="switch-slider"></span>
+            </span>
+          </label>
+          <div class="form-grid-3">
+            <label class="field">
+              <span>Giao thức</span>
+              <select id="dmx-protocol">
+                <option value="artnet">Art-Net (UDP 6454)</option>
+                <option value="sacn">sACN / E1.31 (UDP 5568)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Địa chỉ IP đích</span>
+              <input type="text" id="dmx-host" value="255.255.255.255" placeholder="255.255.255.255">
+            </label>
+            <label class="field">
+              <span>Cổng UDP</span>
+              <input type="number" id="dmx-port" min="1" max="65535" value="6454">
+            </label>
+            <label class="field">
+              <span>Universe</span>
+              <input type="number" id="dmx-universe" min="0" max="63999" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Tốc độ gửi: <b id="dmx-fps-v">35</b> FPS</span>
+              <input type="range" id="dmx-fps" min="5" max="44" value="35">
+            </label>
+            <label class="slider-item">
+              <span>Master Dimmer: <b id="dmx-master-dimmer-v">100</b>%</span>
+              <input type="range" id="dmx-master-dimmer" min="0" max="100" value="100">
+            </label>
+          </div>
+          <label class="switch-row">
+            <span class="switch-label">Blackout DMX (tắt toàn bộ đèn sân khấu)</span>
+            <span class="switch-ui">
+              <input type="checkbox" id="dmx-blackout">
+              <span class="switch-slider"></span>
+            </span>
+          </label>
+          <div id="dmx-status-detail" class="lbl-muted">Trạng thái: Đang tắt.</div>
+
+          <div class="fx-inner-divider"></div>
+          <div class="modal-head" style="padding:0;border:0;margin-bottom:4px">
+            <h4>Danh sách đèn DMX Patch (3–6 kênh)</h4>
+            <div class="btn-row-tight">
+              <button id="btn-dmx-add-fixture" class="btn btn-sm btn-fx">+ Thêm đèn</button>
+              <button id="btn-dmx-reset-fixtures" class="btn btn-sm">Mặc định 8 đèn</button>
+            </div>
+          </div>
+          <div id="dmx-fixture-list" class="dmx-fixture-list"></div>
+        </div>
+
+        <div class="tool-section">
+          <label class="switch-row">
+            <h4>2. Máy chủ nhận lệnh OSC (TouchOSC / QLab / Companion)</h4>
+            <span class="switch-ui">
+              <input type="checkbox" id="osc-enabled">
+              <span class="switch-slider"></span>
+            </span>
+          </label>
+          <div class="popover-row">
+            <label class="inline-num">Cổng UDP OSC:
+              <input type="number" id="osc-port" min="1024" max="65535" value="9000" style="width:88px">
+            </label>
+            <span id="osc-status-detail" class="lbl-muted grow">Đang tắt.</span>
+          </div>
+          <div id="osc-last-msg" class="lbl-muted">Chưa nhận gói tin OSC nào.</div>
+          <div class="osc-cheatsheet">
+            <code>/er/go</code> <code>/er/back</code> <code>/er/blackout</code> <code>/er/stop</code>
+            <code>/er/tbar &lt;0..1&gt;</code> <code>/er/ov1..4</code> <code>/er/flash</code>
+            <code>/er/strobe &lt;0|1&gt;</code> <code>/er/bpm &lt;val&gt;</code>
+            <code>/er/vj/col &lt;1..4&gt;</code> <code>/er/cue &lt;num&gt;</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HỘP THOẠI CẮT KHUNG & KEYSTONE LED + STAGE DISPLAY (FREESHOW) -->
+  <div id="mapping-stage-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="width:min(740px,95vw)">
+      <div class="modal-head">
+        <h3>Cắt khung &amp; Keystone LED + Cửa sổ Stage Display</h3>
+        <button id="btn-close-mapping-modal" class="btn btn-sm">Đóng</button>
+      </div>
+      <div class="modal-body">
+        <div class="tool-section">
+          <div class="modal-head" style="padding:0;border:0;margin-bottom:4px">
+            <h4>1. Cắt khung, Dịch chuyển &amp; Keystone màn hình LED (Output Mapping)</h4>
+            <button id="btn-reset-mapping" class="btn btn-sm">↺ Đặt lại gốc</button>
+          </div>
+          <div class="fx-sliders-grid-2">
+            <label class="slider-item">
+              <span>Cắt mép trên (Crop Top): <b id="map-crop-top-v">0</b>%</span>
+              <input type="range" id="map-crop-top" min="0" max="45" step="0.5" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Cắt mép dưới (Crop Bottom): <b id="map-crop-bottom-v">0</b>%</span>
+              <input type="range" id="map-crop-bottom" min="0" max="45" step="0.5" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Cắt mép trái (Crop Left): <b id="map-crop-left-v">0</b>%</span>
+              <input type="range" id="map-crop-left" min="0" max="45" step="0.5" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Cắt mép phải (Crop Right): <b id="map-crop-right-v">0</b>%</span>
+              <input type="range" id="map-crop-right" min="0" max="45" step="0.5" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Dịch ngang (Offset X): <b id="map-offset-x-v">0</b> px</span>
+              <input type="range" id="map-offset-x" min="-400" max="400" step="2" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Dịch dọc (Offset Y): <b id="map-offset-y-v">0</b> px</span>
+              <input type="range" id="map-offset-y" min="-400" max="400" step="2" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Co giãn ngang (Scale X): <b id="map-scale-x-v">100</b>%</span>
+              <input type="range" id="map-scale-x" min="20" max="200" step="1" value="100">
+            </label>
+            <label class="slider-item">
+              <span>Co giãn dọc (Scale Y): <b id="map-scale-y-v">100</b>%</span>
+              <input type="range" id="map-scale-y" min="20" max="200" step="1" value="100">
+            </label>
+            <label class="slider-item">
+              <span>Keystone nghiêng X: <b id="map-rotate-x-v">0</b>°</span>
+              <input type="range" id="map-rotate-x" min="-35" max="35" step="0.5" value="0">
+            </label>
+            <label class="slider-item">
+              <span>Keystone nghiêng Y: <b id="map-rotate-y-v">0</b>°</span>
+              <input type="range" id="map-rotate-y" min="-35" max="35" step="0.5" value="0">
+            </label>
+            <label class="slider-item" style="grid-column: span 2">
+              <span>Độ tụ phối cảnh (Perspective): <b id="map-perspective-v">1200</b> px</span>
+              <input type="range" id="map-perspective" min="300" max="3000" step="50" value="1200">
+            </label>
+          </div>
+          <div class="form-grid-2">
+            <label class="switch-row">
+              <span class="switch-label">Lật ngang (Flip H)</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="map-flip-h">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <label class="switch-row">
+              <span class="switch-label">Lật dọc (Flip V)</span>
+              <span class="switch-ui">
+                <input type="checkbox" id="map-flip-v">
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="tool-section">
+          <h4>2. Cửa sổ Stage Display cho MC / Ban nhạc (FreeShow Confidence Monitor)</h4>
+          <div class="popover-row">
+            <select id="stage-display-select" class="ctrl-select grow"></select>
+            <button id="btn-toggle-stage" class="btn btn-sm btn-emerald">Mở Stage Display</button>
+          </div>
+          <div id="stage-modal-status" class="lbl-muted">Stage Display đang tắt.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- HỘP THOẠI CÔNG CỤ (REMOTE LAN, MIDI, NHẬT KÝ SHOW) -->
   <div id="tools-modal" class="modal-backdrop hidden">
-    <div class="modal-card">
+    <div class="modal-card" style="width:min(760px,94vw)">
       <div class="modal-head">
         <h3>Công cụ Sự kiện &amp; Cài đặt mở rộng</h3>
         <button id="btn-close-tools" class="btn btn-sm">Đóng</button>
@@ -747,7 +1631,7 @@
       <div class="modal-body">
         <div class="tool-section">
           <label class="switch-row">
-            <h4>1. Điều khiển từ xa qua Wi-Fi / LAN (điện thoại / máy tính bảng)</h4>
+            <h4>1. Điều khiển từ xa qua Wi-Fi / LAN &amp; Web Stage (/stage)</h4>
             <span class="switch-ui">
               <input type="checkbox" id="remote-enable">
               <span class="switch-slider"></span>
@@ -765,13 +1649,28 @@
         </div>
 
         <div class="tool-section">
-          <h4>2. Gán phím MIDI ngoài (bộ điều khiển MIDI)</h4>
+          <h4>2. Gán phím / Fader MIDI ngoài (bộ điều khiển MIDI)</h4>
           <div id="midi-status" class="lbl-muted">Đang kiểm tra MIDI...</div>
           <div class="midi-learn-row">
-            <button class="btn btn-sm" data-midi-learn="go">Học phím GO (<span id="midi-lbl-go">Chưa gán</span>)</button>
-            <button class="btn btn-sm" data-midi-learn="blackout">Học phím ĐEN MÀN (<span id="midi-lbl-blackout">Chưa gán</span>)</button>
-            <button class="btn btn-sm" data-midi-learn="stopAll">Học phím DỪNG (<span id="midi-lbl-stopAll">Chưa gán</span>)</button>
-            <button id="btn-midi-clear" class="btn btn-sm">Xóa gán MIDI</button>
+            <button class="btn btn-sm" data-midi-learn="go">GO (<span id="midi-lbl-go">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="blackout">ĐEN MÀN (<span id="midi-lbl-blackout">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="stopAll">DỪNG (<span id="midi-lbl-stopAll">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="fadeMusic">TẮT NHẠC (<span id="midi-lbl-fadeMusic">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="tapBpm">TAP BPM (<span id="midi-lbl-tapBpm">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="flashHit">FLASH (<span id="midi-lbl-flashHit">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="strobeHold">STROBE HOLD (<span id="midi-lbl-strobeHold">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="ov1">OV1 (<span id="midi-lbl-ov1">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="ov2">OV2 (<span id="midi-lbl-ov2">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="ov3">OV3 (<span id="midi-lbl-ov3">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="ov4">OV4 (<span id="midi-lbl-ov4">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="col1">VJ Cột 1 (<span id="midi-lbl-col1">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="col2">VJ Cột 2 (<span id="midi-lbl-col2">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="col3">VJ Cột 3 (<span id="midi-lbl-col3">Chưa gán</span>)</button>
+            <button class="btn btn-sm" data-midi-learn="col4">VJ Cột 4 (<span id="midi-lbl-col4">Chưa gán</span>)</button>
+            <button class="btn btn-sm btn-fx" data-midi-learn="tbar">Fader T-Bar (<span id="midi-lbl-tbar">Chưa gán</span>)</button>
+            <button class="btn btn-sm btn-fx" data-midi-learn="masterDimmer">Fader Dimmer (<span id="midi-lbl-masterDimmer">Chưa gán</span>)</button>
+            <button class="btn btn-sm btn-fx" data-midi-learn="strobeIntensity">Fader Strobe (<span id="midi-lbl-strobeIntensity">Chưa gán</span>)</button>
+            <button id="btn-midi-clear" class="btn btn-sm btn-danger-soft">Xóa gán MIDI</button>
           </div>
         </div>
 
@@ -817,22 +1716,29 @@
   <div id="help-modal" class="modal-backdrop hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>Phím tắt &amp; Hướng dẫn nhanh — EVENT RUNNER v2.4</h3>
+        <h3>Phím tắt &amp; Hướng dẫn nhanh — EVENT RUNNER v3.0 PRO</h3>
         <button id="btn-close-help" class="btn btn-sm">Đóng</button>
       </div>
       <div class="modal-body">
         <div class="tool-section">
-          <h4>Thao tác trên Danh sách Cue</h4>
-          <div class="lbl-muted">• <b>Click đơn</b> vào thẻ Cue: Chọn làm Cue KẾ TIẾP (chưa phát).</div>
-          <div class="lbl-muted">• <b>Nháy đúp (Double-click)</b> vào thẻ Cue: Phát ngay Cue đó ra LED &amp; Loa.</div>
-          <div class="lbl-muted">• <b>Kéo thả</b> thẻ Cue: Sắp xếp thứ tự kịch bản (chỉ ở chế độ BIÊN TẬP / TẬP DƯỢT).</div>
+          <h4>Thao tác trên Danh sách Cue &amp; VJ Deck</h4>
+          <div class="lbl-muted">• <b>Click đơn</b> vào thẻ Cue: Chọn làm Cue KẾ TIẾP · <b>Nháy đúp</b>: Phát ngay Cue đó.</div>
+          <div class="lbl-muted">• <b>VJ Deck</b>: Bấm ô Clip để phát trên Layer 1–3; bấm Cột 1–4 để kích cả cột; chuột phải / nút ⚙ để chọn file, Generator hoặc Camera.</div>
+          <div class="lbl-muted">• <b>Thanh T-Bar</b>: Kéo thủ công để chuyển cảnh mượt; chạm 100% sẽ chốt Cue mới sang LIVE.</div>
         </div>
         <div class="tool-section">
-          <h4>Phím tắt Bàn phím</h4>
+          <h4>Phím tắt Bàn phím v3.0 Pro</h4>
           <div class="lbl-muted">• <b>Space / Numpad Enter</b>: GO — Chạy Cue kế tiếp</div>
-          <div class="lbl-muted">• <b>↑ / ↓</b>: Chọn Cue trước / sau</div>
+          <div class="lbl-muted">• <b>↑ / ↓</b>: Chọn Cue trước / sau · <b>C</b>: CUT nhanh sang Cue kế tiếp</div>
+          <div class="lbl-muted">• <b>G / Shift+Space</b>: ⚡ FLASH LED tức thì · <b>Giữ S</b>: 💥 STROBE HOLD 16Hz · <b>P</b>: TAP BPM</div>
+          <div class="lbl-muted">• <b>Alt + 1..4</b>: Bật/tắt nhanh Overlay OV1..OV4 (Lower Third / Logo / Đồng hồ / Ticker)</div>
           <div class="lbl-muted">• <b>B / Numpad 0</b>: ĐEN MÀN · <b>F</b>: TẮT NHẠC (2s) · <b>T</b>: MÀN THỬ · <b>Esc</b>: DỪNG TẤT CẢ</div>
-          <div class="lbl-muted">• <b>Numpad 1–4</b>: Phát nhanh 4 nút SFX · <b>Ctrl+S / Ctrl+O / Ctrl+Z / Ctrl+Y</b>: Lưu / Mở / Hoàn tác</div>
+          <div class="lbl-muted">• <b>F1–F6</b>: Phát nhanh 6 nút SFX · <b>Ctrl+S / Ctrl+O / Ctrl+Z / Ctrl+Y</b>: Lưu / Mở / Hoàn tác</div>
+        </div>
+        <div class="tool-section">
+          <h4>Stage Display, DMX &amp; OSC</h4>
+          <div class="lbl-muted">• <b>Stage Display</b>: Mở cửa sổ riêng cho MC/Ban nhạc hoặc truy cập <code>/stage</code> qua Wi-Fi LAN.</div>
+          <div class="lbl-muted">• <b>DMX Art-Net / sACN &amp; OSC</b>: Cấu hình trong menu <b>Tùy chọn</b>; nhận MIDI Clock (0xF8) tự động đồng bộ BPM.</div>
         </div>
       </div>
     </div>
@@ -841,6 +1747,9 @@
   <script src="src/shared/logic.js"></script>
   <script src="src/control/audio-engine.js"></script>
   <script src="src/control/midi-hotkey.js"></script>
+  <script src="src/control/vj-deck-ui.js"></script>
+  <script src="src/control/overlays-ui.js"></script>
+  <script src="src/control/led-dmx-ui.js"></script>
   <script src="src/control/control-app.js"></script>
 </body>
 </html>

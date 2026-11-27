@@ -13,7 +13,173 @@
   'use strict';
 
   /** Các kiểu chuyển cảnh hỗ trợ trên màn LED */
-  const TRANSITION_TYPES = ['cut', 'fade', 'black', 'slide-left', 'slide-right', 'zoom'];
+  const TRANSITION_TYPES = [
+    'cut',
+    'fade',
+    'black',
+    'slide-left',
+    'slide-right',
+    'zoom',
+    'wipe-left',
+    'wipe-right',
+    'wipe-up',
+    'circle-iris',
+    'blur-dissolve',
+    'flash-cut'
+  ];
+
+  /** Chế độ hòa trộn lớp VJ & LED Strobe */
+  const BLEND_MODES = [
+    'normal',
+    'screen',
+    'plus-lighter',
+    'multiply',
+    'overlay',
+    'lighten',
+    'difference',
+    'color-dodge',
+    'hard-light'
+  ];
+
+  /** Các chế độ chớp / đuổi đèn LED đồng bộ nhạc */
+  const LED_STROBE_MODES = [
+    'off',
+    'flash',
+    'wash',
+    'edge-chase',
+    'quadrant',
+    'matrix-bars',
+    'invert-hit',
+    'blinder'
+  ];
+
+  /** Bộ tạo hình ảnh VJ theo thời gian thực */
+  const VJ_GENERATORS = [
+    'spectrum-bars',
+    'laser-beams',
+    'strobe-matrix',
+    'pulse-rings',
+    'cyber-grid',
+    'plasma-wave'
+  ];
+
+  /** Bảng màu LED đồng bộ theo chủ đề sân khấu */
+  const LED_PALETTES = {
+    white: { name: 'Trắng tinh khiết', colors: ['#ffffff', '#dbeafe'] },
+    cyber: { name: 'Cyber Neon', colors: ['#00d2ff', '#ff007f', '#7c3aed'] },
+    fire: { name: 'Lửa Sân Khấu', colors: ['#ff3b00', '#ff8800', '#ffd000'] },
+    rainbow: { name: 'Cầu Vồng EDM', colors: ['#ff0055', '#ff9900', '#ffee00', '#00ff88', '#00d2ff', '#8b5cf6'] },
+    gala: { name: 'Gala Sang Trọng', colors: ['#ffd700', '#fff1b8', '#ff9f1c', '#ffffff'] },
+    ice: { name: 'Băng Giá', colors: ['#00f5d4', '#00bbf9', '#e0f7ff'] },
+    custom: { name: 'Tự chọn A/B', colors: ['#00d2ff', '#ff007f'] }
+  };
+
+  /** Các preset chớp LED đồng bộ beat 1 chạm */
+  const LED_STROBE_PRESETS = {
+    'Club Drop': {
+      on: true,
+      mode: 'flash',
+      palette: 'cyber',
+      colorA: '#00d2ff',
+      colorB: '#ff007f',
+      trigger: 'beat',
+      divider: 1,
+      intensity: 95,
+      decayMs: 160,
+      blend: 'plus-lighter',
+      edgeWidth: 12,
+      dmxMode: 'beat-flash'
+    },
+    'EDM Strobe': {
+      on: true,
+      mode: 'blinder',
+      palette: 'white',
+      colorA: '#ffffff',
+      colorB: '#dbeafe',
+      trigger: 'all',
+      divider: 2,
+      intensity: 100,
+      decayMs: 110,
+      blend: 'plus-lighter',
+      edgeWidth: 10,
+      dmxMode: 'strobe'
+    },
+    'Viền Sân Khấu': {
+      on: true,
+      mode: 'edge-chase',
+      palette: 'cyber',
+      colorA: '#00d2ff',
+      colorB: '#ff007f',
+      trigger: 'beat',
+      divider: 1,
+      intensity: 85,
+      decayMs: 220,
+      blend: 'plus-lighter',
+      edgeWidth: 10,
+      dmxMode: 'chase'
+    },
+    'Chớp 4 Góc': {
+      on: true,
+      mode: 'quadrant',
+      palette: 'fire',
+      colorA: '#ff3b00',
+      colorB: '#ffd000',
+      trigger: 'bass',
+      divider: 1,
+      intensity: 90,
+      decayMs: 180,
+      blend: 'screen',
+      edgeWidth: 14,
+      dmxMode: 'chase'
+    },
+    'Equalizer LED': {
+      on: true,
+      mode: 'matrix-bars',
+      palette: 'rainbow',
+      colorA: '#ff0055',
+      colorB: '#00d2ff',
+      trigger: 'bass',
+      divider: 1,
+      intensity: 85,
+      decayMs: 200,
+      blend: 'plus-lighter',
+      edgeWidth: 10,
+      dmxMode: 'rainbow-beat'
+    },
+    'Gala Nhẹ': {
+      on: true,
+      mode: 'wash',
+      palette: 'gala',
+      colorA: '#ffd700',
+      colorB: '#fff1b8',
+      trigger: 'beat',
+      divider: 0.5,
+      intensity: 55,
+      decayMs: 360,
+      blend: 'screen',
+      edgeWidth: 8,
+      dmxMode: 'bass-dimmer'
+    },
+    'Âm bản Kick': {
+      on: true,
+      mode: 'invert-hit',
+      palette: 'ice',
+      colorA: '#00f5d4',
+      colorB: '#00bbf9',
+      trigger: 'bass',
+      divider: 1,
+      intensity: 90,
+      decayMs: 140,
+      blend: 'difference',
+      edgeWidth: 12,
+      dmxMode: 'beat-flash'
+    }
+  };
+
+  const VALID_LED_TRIGGERS = ['beat', 'bass', 'mid', 'high', 'all'];
+  const VALID_DIVIDERS = [0.25, 0.5, 1, 2, 4];
+  const VALID_DMX_MODES = ['beat-flash', 'chase', 'rainbow-beat', 'bass-dimmer', 'strobe', 'solid'];
+  const VALID_FIXTURE_TYPES = ['rgb', 'rgbw', 'drgb', 'drgbs', 'drgbws', 'strobe'];
 
   /** Các bộ thông số hiệu ứng beat + rung nền cài sẵn (1 chạm) */
   const FX_PRESETS = {
@@ -84,6 +250,93 @@
   }
 
   /**
+   * Chuẩn hóa chuỗi màu hex (#rgb, #rrggbb) về dạng #rrggbb an toàn
+   */
+  function normalizeHexColor(hex, fallback) {
+    const fb = typeof fallback === 'string' && /^#[0-9a-fA-F]{6}$/.test(fallback) ? fallback.toLowerCase() : '#ffffff';
+    if (typeof hex !== 'string') return fb;
+    let clean = hex.trim();
+    if (!clean.startsWith('#')) clean = '#' + clean;
+    if (/^#[0-9a-fA-F]{3}$/.test(clean)) {
+      return (
+        '#' +
+        clean[1] + clean[1] +
+        clean[2] + clean[2] +
+        clean[3] + clean[3]
+      ).toLowerCase();
+    }
+    if (/^#[0-9a-fA-F]{6}$/.test(clean)) {
+      return clean.toLowerCase();
+    }
+    if (/^#[0-9a-fA-F]{8}$/.test(clean)) {
+      return clean.slice(0, 7).toLowerCase();
+    }
+    return fb;
+  }
+
+  /**
+   * Chuyển mã màu hex (#rgb / #rrggbb / #rrggbbaa) sang { r, g, b } (0..255)
+   */
+  function hexToRgb(hex) {
+    if (typeof hex !== 'string') return { r: 0, g: 0, b: 0 };
+    let clean = hex.trim();
+    if (clean.startsWith('#')) clean = clean.slice(1);
+    if (/^[0-9a-fA-F]{3}$/.test(clean)) {
+      return {
+        r: parseInt(clean[0] + clean[0], 16),
+        g: parseInt(clean[1] + clean[1], 16),
+        b: parseInt(clean[2] + clean[2], 16)
+      };
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(clean) || /^[0-9a-fA-F]{8}$/.test(clean)) {
+      return {
+        r: parseInt(clean.slice(0, 2), 16),
+        g: parseInt(clean.slice(2, 4), 16),
+        b: parseInt(clean.slice(4, 6), 16)
+      };
+    }
+    return { r: 0, g: 0, b: 0 };
+  }
+
+  /**
+   * Chuẩn hóa bộ chia nhịp (divider) về một trong các mốc hợp lệ [0.25, 0.5, 1, 2, 4]
+   */
+  function normalizeBeatDivider(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return 1;
+    let best = VALID_DIVIDERS[0];
+    let bestDist = Math.abs(n - best);
+    for (let i = 1; i < VALID_DIVIDERS.length; i++) {
+      const dist = Math.abs(n - VALID_DIVIDERS[i]);
+      if (dist < bestDist) {
+        best = VALID_DIVIDERS[i];
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Trả về danh sách mã màu hex hiện dùng cho LED Sync
+   */
+  function resolvePaletteColors(ledSync) {
+    const cfg = ledSync && typeof ledSync === 'object' ? ledSync : {};
+    if (cfg.palette === 'custom') {
+      return [
+        normalizeHexColor(cfg.colorA, '#00d2ff'),
+        normalizeHexColor(cfg.colorB, '#ff007f')
+      ];
+    }
+    const entry = Object.prototype.hasOwnProperty.call(LED_PALETTES, cfg.palette)
+      ? LED_PALETTES[cfg.palette]
+      : LED_PALETTES.cyber;
+    if (entry && Array.isArray(entry.colors) && entry.colors.length > 0) {
+      return entry.colors.slice();
+    }
+    return LED_PALETTES.cyber.colors.slice();
+  }
+
+  /**
    * Tạo cấu hình hiệu ứng beat + phân tích bass + rung nền mặc định (tương thích dự án cũ)
    */
   function createDefaultFx(overrides) {
@@ -132,7 +385,7 @@
 
     return {
       on: isOn,
-      src: ['auto', 'bpm', 'ext'].includes(overrides.src) ? overrides.src : 'auto',
+      src: ['auto', 'video', 'bpm', 'ext'].includes(overrides.src) ? overrides.src : 'auto',
       bpm: clamp(overrides.bpm ?? base.bpm, 40, 240),
       off: clamp(overrides.off ?? base.off, -5, 5),
       sens: clamp(overrides.sens ?? base.sens, 1, 10),
@@ -189,6 +442,388 @@
   }
 
   /**
+   * Tạo cấu hình đồng bộ chớp đèn LED / DMX theo beat cho từng cue
+   */
+  function createDefaultLedSync(overrides) {
+    const base = {
+      on: false,
+      mode: 'edge-chase',
+      palette: 'cyber',
+      colorA: '#00d2ff',
+      colorB: '#ff007f',
+      trigger: 'beat',
+      divider: 1,
+      intensity: 80,
+      decayMs: 180,
+      blend: 'plus-lighter',
+      edgeWidth: 10,
+      dmxMode: 'beat-flash'
+    };
+    if (!overrides || typeof overrides !== 'object') return base;
+
+    return {
+      on: overrides.on !== undefined ? Boolean(overrides.on) : base.on,
+      mode: LED_STROBE_MODES.includes(overrides.mode) ? overrides.mode : base.mode,
+      palette: Object.prototype.hasOwnProperty.call(LED_PALETTES, overrides.palette)
+        ? overrides.palette
+        : base.palette,
+      colorA: normalizeHexColor(overrides.colorA, base.colorA),
+      colorB: normalizeHexColor(overrides.colorB, base.colorB),
+      trigger: VALID_LED_TRIGGERS.includes(overrides.trigger) ? overrides.trigger : base.trigger,
+      divider: overrides.divider !== undefined ? normalizeBeatDivider(overrides.divider) : base.divider,
+      intensity: clamp(overrides.intensity ?? base.intensity, 0, 100),
+      decayMs: clamp(overrides.decayMs ?? base.decayMs, 40, 1200),
+      blend: BLEND_MODES.includes(overrides.blend) ? overrides.blend : base.blend,
+      edgeWidth: clamp(overrides.edgeWidth ?? base.edgeWidth, 1, 40),
+      dmxMode: VALID_DMX_MODES.includes(overrides.dmxMode) ? overrides.dmxMode : base.dmxMode
+    };
+  }
+
+  /**
+   * Tạo cấu hình 4 lớp Overlay kiểu vMix (Lower Third, Logo, Timer, Marquee Ticker)
+   */
+  function createDefaultOverlays(overrides) {
+    const src = overrides && typeof overrides === 'object' ? overrides : {};
+    const o1 = src.ov1 && typeof src.ov1 === 'object' ? src.ov1 : {};
+    const o2 = src.ov2 && typeof src.ov2 === 'object' ? src.ov2 : {};
+    const o3 = src.ov3 && typeof src.ov3 === 'object' ? src.ov3 : {};
+    const o4 = src.ov4 && typeof src.ov4 === 'object' ? src.ov4 : {};
+
+    const validThemes = ['modern', 'neon', 'corporate', 'breaking'];
+    const validOv1Pos = ['bottom-left', 'bottom-right', 'bottom-center', 'top-left', 'top-right'];
+    const validCornerPos = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+    const validTimerPos = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'];
+    const validTimerModes = ['countdown', 'clock', 'countup'];
+    const validTickerPos = ['top', 'bottom'];
+
+    return {
+      ov1: {
+        active: Boolean(o1.active),
+        title: typeof o1.title === 'string' ? o1.title : '',
+        subtitle: typeof o1.subtitle === 'string' ? o1.subtitle : '',
+        theme: validThemes.includes(o1.theme) ? o1.theme : 'modern',
+        pos: validOv1Pos.includes(o1.pos) ? o1.pos : 'bottom-left',
+        accentColor: normalizeHexColor(o1.accentColor, '#00d2ff'),
+        autoHideSec: clamp(o1.autoHideSec ?? 0, 0, 3600)
+      },
+      ov2: {
+        active: Boolean(o2.active),
+        path: typeof o2.path === 'string' && o2.path.trim() ? o2.path.trim() : null,
+        pos: validCornerPos.includes(o2.pos) ? o2.pos : 'top-right',
+        scale: clamp(o2.scale ?? 14, 3, 60),
+        opacity: clamp(o2.opacity ?? 90, 0, 100),
+        margin: clamp(o2.margin ?? 28, 0, 200)
+      },
+      ov3: {
+        active: Boolean(o3.active),
+        mode: validTimerModes.includes(o3.mode) ? o3.mode : 'countdown',
+        durationSec: clamp(o3.durationSec ?? 300, 0, 86400),
+        targetTime: typeof o3.targetTime === 'string' && /^\d{1,2}:\d{2}$/.test(o3.targetTime.trim())
+          ? o3.targetTime.trim()
+          : '20:00',
+        label: typeof o3.label === 'string' ? o3.label : 'ĐẾM NGƯỢC',
+        pos: validTimerPos.includes(o3.pos) ? o3.pos : 'top-left',
+        size: clamp(o3.size ?? 46, 16, 180),
+        color: normalizeHexColor(o3.color, '#ffffff'),
+        warnSec: clamp(o3.warnSec ?? 30, 0, 3600),
+        running: Boolean(o3.running)
+      },
+      ov4: {
+        active: Boolean(o4.active),
+        text: typeof o4.text === 'string' ? o4.text : '',
+        pos: validTickerPos.includes(o4.pos) ? o4.pos : 'bottom',
+        speed: clamp(o4.speed ?? 85, 10, 400),
+        size: clamp(o4.size ?? 28, 14, 120),
+        color: normalizeHexColor(o4.color, '#ffffff'),
+        bgColor: normalizeHexColor(o4.bgColor, '#08101c'),
+        bgOpacity: clamp(o4.bgOpacity ?? 82, 0, 100)
+      }
+    };
+  }
+
+  /**
+   * Chuẩn hóa một ô clip trong VJ Deck
+   */
+  function normalizeVjClip(rawClip, fallbackId) {
+    const c = rawClip && typeof rawClip === 'object' ? rawClip : {};
+    const validKinds = ['empty', 'image', 'video', 'generator', 'camera'];
+    const kind = validKinds.includes(c.kind) ? c.kind : 'empty';
+    const generator = VJ_GENERATORS.includes(c.generator) ? c.generator : 'laser-beams';
+    const defaultName = kind === 'empty' ? 'Trống' : generator;
+    return {
+      id: typeof c.id === 'string' && c.id.trim() ? c.id.trim() : fallbackId,
+      name: typeof c.name === 'string' && c.name.trim() ? c.name.trim() : defaultName,
+      kind,
+      path: typeof c.path === 'string' && c.path.trim() ? c.path.trim() : null,
+      generator,
+      cameraId: typeof c.cameraId === 'string' ? c.cameraId : '',
+      color: normalizeHexColor(c.color, '#00d2ff'),
+      speed: clamp(c.speed ?? 1, 0.1, 4),
+      loop: c.loop !== undefined ? Boolean(c.loop) : true,
+      vsound: c.vsound !== undefined ? Boolean(c.vsound) : (kind === 'video')
+    };
+  }
+
+  /**
+   * Tạo cấu hình VJ Deck 3 tầng x 4 cột (3 deck A/B/C) kiểu Resolume
+   */
+  function createDefaultVjDeck(overrides) {
+    const src = overrides && typeof overrides === 'object' ? overrides : {};
+    const defaultLayers = [
+      { id: 'vj-l1', name: 'Layer 1 (Nền)', opacity: 100, blend: 'normal', speed: 1, bypass: false, solo: false, audioReact: false, activeClipId: null },
+      { id: 'vj-l2', name: 'Layer 2 (Giữa)', opacity: 100, blend: 'screen', speed: 1, bypass: false, solo: false, audioReact: false, activeClipId: null },
+      { id: 'vj-l3', name: 'Layer 3 (Chớp/Overlay)', opacity: 100, blend: 'plus-lighter', speed: 1, bypass: false, solo: false, audioReact: false, activeClipId: null }
+    ];
+
+    const layers = defaultLayers.map((def, idx) => {
+      const rawLayer = Array.isArray(src.layers) && src.layers[idx] && typeof src.layers[idx] === 'object'
+        ? src.layers[idx]
+        : {};
+      return {
+        id: def.id,
+        name: typeof rawLayer.name === 'string' && rawLayer.name.trim() ? rawLayer.name.trim() : def.name,
+        opacity: clamp(rawLayer.opacity ?? def.opacity, 0, 100),
+        blend: BLEND_MODES.includes(rawLayer.blend) ? rawLayer.blend : def.blend,
+        speed: clamp(rawLayer.speed ?? def.speed, 0.1, 4),
+        bypass: Boolean(rawLayer.bypass),
+        solo: Boolean(rawLayer.solo),
+        audioReact: Boolean(rawLayer.audioReact),
+        activeClipId: typeof rawLayer.activeClipId === 'string' && rawLayer.activeClipId.trim()
+          ? rawLayer.activeClipId.trim()
+          : null
+      };
+    });
+
+    const buildEmptyDeck = (deckIdx) => {
+      const matrix = [];
+      for (let l = 0; l < 3; l++) {
+        const row = [];
+        for (let c = 0; c < 4; c++) {
+          row.push(normalizeVjClip({ kind: 'empty', name: 'Trống' }, `clip-d${deckIdx}-l${l}-c${c}`));
+        }
+        matrix.push(row);
+      }
+      return matrix;
+    };
+
+    const hasProvidedDecks = Array.isArray(src.decks);
+    const decks = [0, 1, 2].map((deckIdx) => {
+      if (!hasProvidedDecks) {
+        const deck = buildEmptyDeck(deckIdx);
+        if (deckIdx === 0) {
+          // Deck A Layer 2 (index 1): 2 ambient generators + 2 empty slots
+          deck[1][0] = normalizeVjClip({
+            id: 'clip-d0-l1-c0',
+            name: 'Lưới Cyber',
+            kind: 'generator',
+            generator: 'cyber-grid',
+            color: '#00d2ff'
+          });
+          deck[1][1] = normalizeVjClip({
+            id: 'clip-d0-l1-c1',
+            name: 'Sóng Plasma',
+            kind: 'generator',
+            generator: 'plasma-wave',
+            color: '#ff007f'
+          });
+          // Deck A Layer 3 (index 2): 4 ready-to-play generators
+          deck[2][0] = normalizeVjClip({
+            id: 'clip-d0-l2-c0',
+            name: 'Tia Laser',
+            kind: 'generator',
+            generator: 'laser-beams',
+            color: '#00d2ff'
+          });
+          deck[2][1] = normalizeVjClip({
+            id: 'clip-d0-l2-c1',
+            name: 'Ma trận Chớp',
+            kind: 'generator',
+            generator: 'strobe-matrix',
+            color: '#ffffff'
+          });
+          deck[2][2] = normalizeVjClip({
+            id: 'clip-d0-l2-c2',
+            name: 'Vòng Sóng',
+            kind: 'generator',
+            generator: 'pulse-rings',
+            color: '#ff007f'
+          });
+          deck[2][3] = normalizeVjClip({
+            id: 'clip-d0-l2-c3',
+            name: 'Cột Nhạc',
+            kind: 'generator',
+            generator: 'spectrum-bars',
+            color: '#00f5d4'
+          });
+        }
+        return deck;
+      }
+
+      const rawDeck = Array.isArray(src.decks[deckIdx]) ? src.decks[deckIdx] : [];
+      const matrix = [];
+      for (let l = 0; l < 3; l++) {
+        const rawRow = Array.isArray(rawDeck[l]) ? rawDeck[l] : [];
+        const row = [];
+        for (let c = 0; c < 4; c++) {
+          row.push(normalizeVjClip(rawRow[c], `clip-d${deckIdx}-l${l}-c${c}`));
+        }
+        matrix.push(row);
+      }
+      return matrix;
+    });
+
+    const activeDeckIndex = Math.round(clamp(src.activeDeckIndex ?? 0, 0, 2));
+
+    return {
+      activeDeckIndex,
+      layers,
+      decks
+    };
+  }
+
+  /**
+   * Tạo cấu hình Master FX Rack (hiệu ứng tổng xuất ra màn hình LED)
+   */
+  function createDefaultMasterFx(overrides) {
+    const base = {
+      dimmer: 100,
+      contrast: 100,
+      saturate: 100,
+      hue: 0,
+      rgbSplit: 0,
+      rgbBeatLink: false,
+      mirror: 'none',
+      glitch: 0,
+      glitchBeatLink: false,
+      vignette: 0,
+      invert: false,
+      pixelate: 0
+    };
+    if (!overrides || typeof overrides !== 'object') return base;
+    const validMirrors = ['none', 'mirror-h', 'mirror-v', 'quad', 'kaleido'];
+    return {
+      dimmer: clamp(overrides.dimmer ?? base.dimmer, 0, 100),
+      contrast: clamp(overrides.contrast ?? base.contrast, 20, 200),
+      saturate: clamp(overrides.saturate ?? base.saturate, 0, 250),
+      hue: clamp(overrides.hue ?? base.hue, -180, 360),
+      rgbSplit: clamp(overrides.rgbSplit ?? base.rgbSplit, 0, 100),
+      rgbBeatLink: Boolean(overrides.rgbBeatLink),
+      mirror: validMirrors.includes(overrides.mirror) ? overrides.mirror : 'none',
+      glitch: clamp(overrides.glitch ?? base.glitch, 0, 100),
+      glitchBeatLink: Boolean(overrides.glitchBeatLink),
+      vignette: clamp(overrides.vignette ?? base.vignette, 0, 100),
+      invert: Boolean(overrides.invert),
+      pixelate: clamp(overrides.pixelate ?? base.pixelate, 0, 100)
+    };
+  }
+
+  /**
+   * Tạo cấu hình cắt khung & hiệu chỉnh phối cảnh Keystone đầu ra LED
+   */
+  function createDefaultOutputMapping(overrides) {
+    const base = {
+      cropTop: 0,
+      cropBottom: 0,
+      cropLeft: 0,
+      cropRight: 0,
+      offsetX: 0,
+      offsetY: 0,
+      scaleX: 100,
+      scaleY: 100,
+      rotateX: 0,
+      rotateY: 0,
+      perspective: 1200,
+      flipH: false,
+      flipV: false
+    };
+    if (!overrides || typeof overrides !== 'object') return base;
+    return {
+      cropTop: clamp(overrides.cropTop ?? base.cropTop, 0, 45),
+      cropBottom: clamp(overrides.cropBottom ?? base.cropBottom, 0, 45),
+      cropLeft: clamp(overrides.cropLeft ?? base.cropLeft, 0, 45),
+      cropRight: clamp(overrides.cropRight ?? base.cropRight, 0, 45),
+      offsetX: clamp(overrides.offsetX ?? base.offsetX, -500, 500),
+      offsetY: clamp(overrides.offsetY ?? base.offsetY, -500, 500),
+      scaleX: clamp(overrides.scaleX ?? base.scaleX, 10, 300),
+      scaleY: clamp(overrides.scaleY ?? base.scaleY, 10, 300),
+      rotateX: clamp(overrides.rotateX ?? base.rotateX, -45, 45),
+      rotateY: clamp(overrides.rotateY ?? base.rotateY, -45, 45),
+      perspective: clamp(overrides.perspective ?? base.perspective, 200, 5000),
+      flipH: Boolean(overrides.flipH),
+      flipV: Boolean(overrides.flipV)
+    };
+  }
+
+  /**
+   * Tạo cấu hình DMX Art-Net / sACN và 8 đèn Par LED mặc định (kênh 1,5,9,13,17,21,25,29)
+   */
+  function createDefaultDmxConfig(overrides) {
+    const defaultFixtures = [];
+    for (let i = 0; i < 8; i++) {
+      defaultFixtures.push({
+        id: `fix-${i + 1}`,
+        name: `Par LED ${i + 1}`,
+        type: 'drgb',
+        startChannel: 1 + i * 4,
+        group: i < 4 ? 'A' : 'B'
+      });
+    }
+
+    const base = {
+      enabled: false,
+      protocol: 'artnet',
+      host: '255.255.255.255',
+      port: 6454,
+      universe: 0,
+      fps: 35,
+      masterDimmer: 100,
+      blackout: false,
+      fixtures: defaultFixtures
+    };
+    if (!overrides || typeof overrides !== 'object') return base;
+
+    const protocol = overrides.protocol === 'sacn' ? 'sacn' : 'artnet';
+    const fixtures = Array.isArray(overrides.fixtures)
+      ? overrides.fixtures.map((f, idx) => {
+        const rawF = f && typeof f === 'object' ? f : {};
+        return {
+          id: typeof rawF.id === 'string' && rawF.id.trim() ? rawF.id.trim() : `fix-${idx + 1}`,
+          name: typeof rawF.name === 'string' && rawF.name.trim() ? rawF.name.trim() : `Đèn ${idx + 1}`,
+          type: VALID_FIXTURE_TYPES.includes(rawF.type) ? rawF.type : 'drgb',
+          startChannel: Math.round(clamp(rawF.startChannel ?? (1 + idx * 4), 1, 512)),
+          group: typeof rawF.group === 'string' && rawF.group.trim() ? rawF.group.trim() : 'A'
+        };
+      })
+      : defaultFixtures;
+
+    return {
+      enabled: Boolean(overrides.enabled),
+      protocol,
+      host: typeof overrides.host === 'string' && overrides.host.trim()
+        ? overrides.host.trim()
+        : base.host,
+      port: Math.round(clamp(overrides.port ?? (protocol === 'sacn' ? 5568 : 6454), 1, 65535)),
+      universe: Math.round(clamp(overrides.universe ?? (protocol === 'sacn' ? 1 : 0), 0, 63999)),
+      fps: Math.round(clamp(overrides.fps ?? base.fps, 5, 44)),
+      masterDimmer: clamp(overrides.masterDimmer ?? base.masterDimmer, 0, 100),
+      blackout: Boolean(overrides.blackout),
+      fixtures
+    };
+  }
+
+  /**
+   * Tạo cấu hình máy chủ OSC UDP
+   */
+  function createDefaultOscConfig(overrides) {
+    const base = { enabled: false, port: 9000 };
+    if (!overrides || typeof overrides !== 'object') return base;
+    return {
+      enabled: Boolean(overrides.enabled),
+      port: Math.round(clamp(overrides.port ?? base.port, 1, 65535))
+    };
+  }
+
+  /**
    * Tạo một cue mặc định đầy đủ trường
    */
   function createDefaultCue(overrides) {
@@ -207,6 +842,9 @@
       startAt: src.startAt ?? 0,
       endAt: src.endAt ?? 0,
 
+      sourceType: src.sourceType ?? 'media',
+      cameraId: src.cameraId ?? '',
+      generator: src.generator ?? 'laser-beams',
       vis: src.vis ?? null,
       tr: src.tr ?? 'fade',
       dur: src.dur ?? 0.8,
@@ -219,7 +857,8 @@
       autoDelay: src.autoDelay ?? 5,
 
       text: src.text,
-      fx: src.fx
+      fx: src.fx,
+      ledSync: src.ledSync
     });
   }
 
@@ -231,6 +870,8 @@
     const tr = TRANSITION_TYPES.includes(c.tr) ? c.tr : 'fade';
     const fit = c.fit === 'cover' ? 'cover' : 'contain';
     const autoFollow = ['none', 'time', 'audio-end'].includes(c.autoFollow) ? c.autoFollow : 'none';
+    const sourceType = ['media', 'camera', 'generator'].includes(c.sourceType) ? c.sourceType : 'media';
+    const generator = VJ_GENERATORS.includes(c.generator) ? c.generator : 'laser-beams';
     const startAt = Math.max(0, Number(c.startAt) || 0);
     let endAt = Math.max(0, Number(c.endAt) || 0);
     if (endAt > 0 && endAt <= startAt) {
@@ -251,6 +892,9 @@
       startAt,
       endAt,
 
+      sourceType,
+      cameraId: typeof c.cameraId === 'string' ? c.cameraId : '',
+      generator,
       vis: typeof c.vis === 'string' && c.vis.trim() ? c.vis.trim() : null,
       tr,
       dur: clamp(c.dur ?? 0.8, 0, 10),
@@ -266,7 +910,8 @@
       autoDelay: clamp(c.autoDelay ?? 5, 0.2, 3600),
 
       text: createDefaultTextOverlay(c.text),
-      fx: createDefaultFx(c.fx)
+      fx: createDefaultFx(c.fx),
+      ledSync: createDefaultLedSync(c.ledSync)
     };
   }
 
@@ -304,7 +949,25 @@
   }
 
   /**
-   * Kiểm tra và chuẩn hóa toàn bộ file dự án JSON
+   * Tạo cấu trúc dự án v2 trống mặc định
+   */
+  function createEmptyProjectV2() {
+    return {
+      version: 2,
+      cues: [],
+      sfxPads: createDefaultSfxPads(),
+      customFxPresets: {},
+      overlays: createDefaultOverlays(),
+      vjDeck: createDefaultVjDeck(),
+      masterFx: createDefaultMasterFx(),
+      outputMapping: createDefaultOutputMapping(),
+      dmxConfig: createDefaultDmxConfig(),
+      oscConfig: createDefaultOscConfig()
+    };
+  }
+
+  /**
+   * Kiểm tra và chuẩn hóa toàn bộ file dự án JSON (hỗ trợ v1 và v2)
    */
   function validateAndMigrateProject(raw) {
     if (!raw || typeof raw !== 'object') {
@@ -312,7 +975,7 @@
         ok: false,
         error: 'Dữ liệu dự án không phải đối tượng JSON hợp lệ.',
         warnings: [],
-        project: { version: 1, cues: [], sfxPads: createDefaultSfxPads(), customFxPresets: {} }
+        project: createEmptyProjectV2()
       };
     }
 
@@ -322,19 +985,19 @@
     if (Array.isArray(raw.cues)) {
       rawCues = raw.cues;
     } else if (Array.isArray(raw)) {
-      warnings.push('Đã chuyển đổi danh sách cue cũ sang định dạng dự án v1.');
+      warnings.push('Đã chuyển đổi danh sách cue cũ sang định dạng dự án v2.');
       rawCues = raw;
     } else {
       return {
         ok: false,
         error: 'File dự án thiếu danh sách "cues".',
         warnings: [],
-        project: { version: 1, cues: [], sfxPads: createDefaultSfxPads(), customFxPresets: {} }
+        project: createEmptyProjectV2()
       };
     }
 
-    if (raw.version !== undefined && raw.version !== 1) {
-      warnings.push(`Phiên bản dự án ${raw.version} đã được chuẩn hóa về phiên bản 1.`);
+    if (raw.version !== undefined && raw.version !== 1 && raw.version !== 2) {
+      warnings.push(`Phiên bản dự án ${raw.version} đã được chuẩn hóa về phiên bản 2.`);
     }
 
     const seenIds = new Set();
@@ -381,10 +1044,16 @@
       error: null,
       warnings,
       project: {
-        version: 1,
+        version: 2,
         cues,
         sfxPads: createDefaultSfxPads(raw.sfxPads),
-        customFxPresets
+        customFxPresets,
+        overlays: createDefaultOverlays(raw.overlays),
+        vjDeck: createDefaultVjDeck(raw.vjDeck),
+        masterFx: createDefaultMasterFx(raw.masterFx),
+        outputMapping: createDefaultOutputMapping(raw.outputMapping),
+        dmxConfig: createDefaultDmxConfig(raw.dmxConfig),
+        oscConfig: createDefaultOscConfig(raw.oscConfig)
       }
     };
   }
@@ -889,7 +1558,7 @@
         }
       }
 
-      if (cue.vis) {
+      if (cue.vis && (!cue.sourceType || cue.sourceType === 'media')) {
         if (existsMap[cue.vis] === false) {
           issues.push({
             level: 'error',
@@ -927,6 +1596,346 @@
   }
 
   /**
+   * Tính năng lượng 3 dải tần Bass (20-160Hz), Mid (160-2000Hz), High (2000-12000Hz)
+   * từ mảng byte phổ FFT của AnalyserNode, chuẩn hóa trong [0, 1].
+   */
+  function computeThreeBandEnergy(freqUint8, sampleRate = 48000, fftSize = 2048) {
+    if (!freqUint8 || typeof freqUint8.length !== 'number' || freqUint8.length === 0) {
+      return { bass: 0, mid: 0, high: 0 };
+    }
+    const sr = Number(sampleRate) > 0 ? Number(sampleRate) : 48000;
+    const fft = Number(fftSize) > 0 ? Number(fftSize) : 2048;
+    const binHz = sr / fft;
+    const len = freqUint8.length;
+
+    const avgBand = (startBin, endBin) => {
+      if (endBin < startBin || startBin >= len) return 0;
+      const lo = Math.max(0, startBin);
+      const hi = Math.min(len - 1, endBin);
+      if (hi < lo) return 0;
+      let sum = 0;
+      let count = 0;
+      for (let i = lo; i <= hi; i++) {
+        const val = Number(freqUint8[i]);
+        sum += Number.isFinite(val) ? val : 0;
+        count++;
+      }
+      return count > 0 ? clamp(sum / (count * 255), 0, 1) : 0;
+    };
+
+    const b0 = Math.max(0, Math.floor(20 / binHz));
+    const b1 = Math.min(len - 1, Math.floor(160 / binHz));
+    const m0 = Math.max(b1 + 1, Math.floor(160 / binHz));
+    const m1 = Math.min(len - 1, Math.floor(2000 / binHz));
+    const h0 = Math.max(m1 + 1, Math.floor(2000 / binHz));
+    const h1 = Math.min(len - 1, Math.ceil(12000 / binHz));
+
+    return {
+      bass: avgBand(b0, b1),
+      mid: avgBand(m0, m1),
+      high: avgBand(h0, h1)
+    };
+  }
+
+  /**
+   * Ước lượng BPM (60..200) và độ tin cậy (0..1) từ chuỗi mốc beat (ms).
+   * Trả về null nếu chưa đủ ít nhất 4 mốc beat hợp lệ.
+   */
+  function estimateBpmFromBeatTimes(timestampsMs) {
+    if (!Array.isArray(timestampsMs) || timestampsMs.length < 4) return null;
+    const recent = timestampsMs
+      .map(Number)
+      .filter((t) => Number.isFinite(t))
+      .slice(-24);
+    if (recent.length < 4) return null;
+
+    const intervals = [];
+    for (let i = 1; i < recent.length; i++) {
+      const diff = recent[i] - recent[i - 1];
+      if (diff >= 150 && diff <= 2500) {
+        intervals.push(diff);
+      } else if (diff > 2500) {
+        intervals.length = 0;
+      }
+    }
+    if (intervals.length < 3) return null;
+
+    const sorted = intervals.slice().sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const filtered = intervals.length >= 5
+      ? intervals.filter((d) => Math.abs(d - median) <= median * 0.35)
+      : intervals;
+    const used = filtered.length >= 3 ? filtered : intervals;
+
+    const mean = used.reduce((a, b) => a + b, 0) / used.length;
+    if (mean <= 0) return null;
+
+    let variance = 0;
+    for (let i = 0; i < used.length; i++) {
+      const delta = used[i] - mean;
+      variance += delta * delta;
+    }
+    const stdDev = Math.sqrt(variance / used.length);
+    const cv = stdDev / mean;
+
+    const bpm = Math.round(clamp(60000 / mean, 60, 200));
+    const confidence = clamp(1 - cv * 2.5, 0, 1);
+    return { bpm, confidence };
+  }
+
+  /**
+   * Đồng hồ nhịp Master Beat Clock hỗ trợ bộ chia 0.25x..4x, nudge pha và resync
+   */
+  class MasterBeatClock {
+    constructor(bpm = 120, divider = 1) {
+      this.bpm = clamp(bpm, 40, 240);
+      this.divider = normalizeBeatDivider(divider);
+      this.anchorMs = null;
+      this.nudgeOffsetMs = 0;
+      this.lastBeatIndex = -Infinity;
+      this.lastSubBeatIndex = -Infinity;
+      this.lastNowMs = null;
+    }
+
+    setBpm(bpm) {
+      const nextBpm = clamp(bpm, 40, 240);
+      if (nextBpm === this.bpm) return;
+      if (this.anchorMs !== null && this.lastNowMs !== null) {
+        const oldBeatDur = 60000 / this.bpm;
+        const elapsed = this.lastNowMs - this.anchorMs + this.nudgeOffsetMs;
+        const beatPos = elapsed / oldBeatDur;
+        const newBeatDur = 60000 / nextBpm;
+        this.anchorMs = this.lastNowMs + this.nudgeOffsetMs - beatPos * newBeatDur;
+      }
+      this.bpm = nextBpm;
+    }
+
+    setDivider(div) {
+      const nextDiv = normalizeBeatDivider(div);
+      if (nextDiv === this.divider) return;
+      this.divider = nextDiv;
+      if (this.anchorMs !== null && this.lastNowMs !== null) {
+        const subDur = (60000 / this.bpm) / this.divider;
+        const elapsed = this.lastNowMs - this.anchorMs + this.nudgeOffsetMs;
+        this.lastSubBeatIndex = Math.floor(elapsed / subDur + 1e-9);
+      }
+    }
+
+    nudge(ms) {
+      const delta = Number(ms);
+      if (!Number.isFinite(delta)) return;
+      this.nudgeOffsetMs += delta;
+    }
+
+    resync(nowMs = 0) {
+      const safeNow = Number.isFinite(Number(nowMs)) ? Number(nowMs) : 0;
+      this.anchorMs = safeNow;
+      this.nudgeOffsetMs = 0;
+      this.lastBeatIndex = -Infinity;
+      this.lastSubBeatIndex = -Infinity;
+      this.lastNowMs = null;
+    }
+
+    step(nowMs) {
+      const safeNow = Number.isFinite(Number(nowMs)) ? Number(nowMs) : 0;
+      if (this.anchorMs === null) {
+        this.anchorMs = safeNow;
+      }
+      this.lastNowMs = safeNow;
+
+      const beatDurMs = 60000 / this.bpm;
+      const subDurMs = beatDurMs / this.divider;
+      const elapsedMs = safeNow - this.anchorMs + this.nudgeOffsetMs;
+
+      const beatIndex = Math.floor(elapsedMs / beatDurMs + 1e-9);
+      const subBeatIndex = Math.floor(elapsedMs / subDurMs + 1e-9);
+      const rawPhase = (((elapsedMs % beatDurMs) + beatDurMs) % beatDurMs) / beatDurMs;
+      const phase = rawPhase >= 0.999999999 ? 0 : rawPhase;
+      const beatInBar = ((beatIndex % 4) + 4) % 4;
+
+      let isBeat = false;
+      if (this.lastBeatIndex === -Infinity || beatIndex > this.lastBeatIndex) {
+        isBeat = true;
+        this.lastBeatIndex = beatIndex;
+      }
+
+      let isSubBeat = false;
+      if (this.lastSubBeatIndex === -Infinity || subBeatIndex > this.lastSubBeatIndex) {
+        isSubBeat = true;
+        this.lastSubBeatIndex = subBeatIndex;
+      }
+
+      return {
+        phase,
+        beatInBar,
+        beatIndex,
+        subBeatIndex,
+        isBeat,
+        isSubBeat
+      };
+    }
+  }
+
+  /**
+   * Chuyển HSV (h: 0..360, s: 0..1, v: 0..1) sang RGB (0..255)
+   */
+  function hsvToRgb(hDeg, s, v) {
+    const h = ((Number(hDeg) % 360) + 360) % 360;
+    const sat = clamp(s, 0, 1);
+    const val = clamp(v, 0, 1);
+    const c = val * sat;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = val - c;
+    let r1 = 0;
+    let g1 = 0;
+    let b1 = 0;
+    if (h < 60) { r1 = c; g1 = x; }
+    else if (h < 120) { r1 = x; g1 = c; }
+    else if (h < 180) { g1 = c; b1 = x; }
+    else if (h < 240) { g1 = x; b1 = c; }
+    else if (h < 300) { r1 = x; b1 = c; }
+    else { r1 = c; b1 = x; }
+    return {
+      r: Math.round((r1 + m) * 255),
+      g: Math.round((g1 + m) * 255),
+      b: Math.round((b1 + m) * 255)
+    };
+  }
+
+  /**
+   * Tính khung DMX 512 kênh và mảng preview trực quan cho các fixture sân khấu
+   */
+  function computeDmxFrame(dmxConfig, ledSync, beatState, audioBands, nowMs) {
+    const cfg = dmxConfig && typeof dmxConfig === 'object' ? dmxConfig : createDefaultDmxConfig();
+    const sync = ledSync && typeof ledSync === 'object' ? ledSync : createDefaultLedSync();
+    const beat = beatState && typeof beatState === 'object' ? beatState : { phase: 0, beatInBar: 0, beatIndex: 0 };
+    const bands = audioBands && typeof audioBands === 'object' ? audioBands : { bass: 0, mid: 0, high: 0 };
+    const tMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : 0;
+
+    const channels = new Uint8Array(512);
+    const previews = [];
+    const fixtures = Array.isArray(cfg.fixtures) ? cfg.fixtures : [];
+    const masterDimmer = clamp(cfg.masterDimmer ?? 100, 0, 100) / 100;
+
+    if (cfg.blackout || masterDimmer <= 0) {
+      for (let i = 0; i < fixtures.length; i++) {
+        const f = fixtures[i] || {};
+        previews.push({
+          id: f.id || `fix-${i + 1}`,
+          name: f.name || `Đèn ${i + 1}`,
+          r: 0,
+          g: 0,
+          b: 0,
+          dimmer: 0
+        });
+      }
+      return { channels, previews };
+    }
+
+    const paletteRgb = resolvePaletteColors(sync).map(hexToRgb);
+    const intensity = clamp(sync.intensity ?? 80, 0, 100) / 100;
+    const phase = clamp(beat.phase ?? 0, 0, 0.999999);
+    const beatIndex = Math.max(0, Math.floor(Number(beat.beatIndex) || 0));
+    const beatEnv = Number.isFinite(Number(beat.pulse)) ? clamp(beat.pulse, 0, 1) : Math.pow(1 - phase, 2.0);
+    const bass = clamp(bands.bass ?? 0, 0, 1);
+    const dmxMode = VALID_DMX_MODES.includes(sync.dmxMode) ? sync.dmxMode : 'beat-flash';
+    const fixtureCount = Math.max(1, fixtures.length);
+
+    for (let i = 0; i < fixtures.length; i++) {
+      const f = fixtures[i] || {};
+      const type = VALID_FIXTURE_TYPES.includes(f.type) ? f.type : 'drgb';
+      const startCh = Math.round(clamp(f.startChannel ?? 1, 1, 512));
+      const base = startCh - 1;
+
+      let color = paletteRgb[beatIndex % paletteRgb.length] || { r: 255, g: 255, b: 255 };
+      let fixtureDim = intensity;
+      let strobeByte = 0;
+
+      if (dmxMode === 'beat-flash') {
+        color = paletteRgb[beatIndex % paletteRgb.length];
+        fixtureDim = clamp((0.12 + 0.88 * beatEnv) * intensity, 0, 1);
+      } else if (dmxMode === 'chase') {
+        const activeIdx = beatIndex % fixtureCount;
+        color = paletteRgb[(beatIndex + i) % paletteRgb.length];
+        fixtureDim = i === activeIdx
+          ? clamp((0.35 + 0.65 * beatEnv) * intensity, 0, 1)
+          : clamp(0.08 * intensity, 0, 1);
+      } else if (dmxMode === 'rainbow-beat') {
+        const hue = (i / fixtureCount) * 360 + beatIndex * 45 + tMs * 0.02;
+        color = hsvToRgb(hue, 1, 1);
+        fixtureDim = clamp((0.45 + 0.55 * beatEnv) * intensity, 0, 1);
+      } else if (dmxMode === 'bass-dimmer') {
+        color = paletteRgb[i % paletteRgb.length];
+        fixtureDim = clamp(bass * intensity, 0, 1);
+      } else if (dmxMode === 'strobe') {
+        color = paletteRgb[beatIndex % paletteRgb.length];
+        const strobeOn = Math.floor(tMs / 35) % 2 === 0;
+        fixtureDim = strobeOn ? intensity : 0;
+        strobeByte = Math.round(clamp(128 + 127 * intensity, 0, 255));
+      } else if (dmxMode === 'solid') {
+        color = paletteRgb[0];
+        fixtureDim = intensity;
+      }
+
+      const effectiveDim = clamp(fixtureDim * masterDimmer, 0, 1);
+      const dimByte = Math.round(effectiveDim * 255);
+      const rByte = Math.round(clamp(color.r, 0, 255));
+      const gByte = Math.round(clamp(color.g, 0, 255));
+      const bByte = Math.round(clamp(color.b, 0, 255));
+      const wByte = Math.min(rByte, gByte, bByte);
+
+      const writeCh = (offset, val) => {
+        if (base + offset < 512) {
+          channels[base + offset] = Math.round(clamp(val, 0, 255));
+        }
+      };
+
+      if (type === 'rgb') {
+        writeCh(0, rByte * effectiveDim);
+        writeCh(1, gByte * effectiveDim);
+        writeCh(2, bByte * effectiveDim);
+      } else if (type === 'rgbw') {
+        writeCh(0, rByte * effectiveDim);
+        writeCh(1, gByte * effectiveDim);
+        writeCh(2, bByte * effectiveDim);
+        writeCh(3, wByte * effectiveDim);
+      } else if (type === 'drgb') {
+        writeCh(0, dimByte);
+        writeCh(1, rByte);
+        writeCh(2, gByte);
+        writeCh(3, bByte);
+      } else if (type === 'drgbs') {
+        writeCh(0, dimByte);
+        writeCh(1, rByte);
+        writeCh(2, gByte);
+        writeCh(3, bByte);
+        writeCh(4, strobeByte);
+      } else if (type === 'drgbws') {
+        writeCh(0, dimByte);
+        writeCh(1, rByte);
+        writeCh(2, gByte);
+        writeCh(3, bByte);
+        writeCh(4, wByte);
+        writeCh(5, strobeByte);
+      } else if (type === 'strobe') {
+        writeCh(0, dimByte);
+        writeCh(1, strobeByte);
+      }
+
+      previews.push({
+        id: f.id || `fix-${i + 1}`,
+        name: f.name || `Đèn ${i + 1}`,
+        r: rByte,
+        g: gByte,
+        b: bByte,
+        dimmer: Number(effectiveDim.toFixed(3))
+      });
+    }
+
+    return { channels, previews };
+  }
+
+  /**
    * Định dạng số giây sang mm:ss
    */
   function formatTime(seconds) {
@@ -940,6 +1949,11 @@
 
   return {
     TRANSITION_TYPES,
+    BLEND_MODES,
+    LED_STROBE_MODES,
+    VJ_GENERATORS,
+    LED_PALETTES,
+    LED_STROBE_PRESETS,
     FX_PRESETS,
     BASS_PRESETS,
     AUDIO_EXTENSIONS,
@@ -948,8 +1962,17 @@
     RISKY_VIDEO_EXTENSIONS,
     clamp,
     generateId,
+    hexToRgb,
+    resolvePaletteColors,
     createDefaultFx,
     createDefaultTextOverlay,
+    createDefaultLedSync,
+    createDefaultOverlays,
+    createDefaultVjDeck,
+    createDefaultMasterFx,
+    createDefaultOutputMapping,
+    createDefaultDmxConfig,
+    createDefaultOscConfig,
     createDefaultCue,
     normalizeCue,
     createDefaultSfxPads,
@@ -957,7 +1980,11 @@
     createOnsetDetector,
     BeatDetector,
     BpmBeatTracker,
+    MasterBeatClock,
     calculateTapBpm,
+    estimateBpmFromBeatTimes,
+    computeThreeBandEnergy,
+    computeDmxFrame,
     calculateOverscanScale,
     pickNextBeatAngle,
     calculateEffectiveDecay,

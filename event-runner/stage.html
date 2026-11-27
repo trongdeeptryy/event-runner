@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none';">
+  <title>EVENT RUNNER — Stage Display</title>
+  <link rel="stylesheet" href="src/styles/stage.css">
+</head>
+<body>
+  <div id="stage-shell">
+    <!-- Thanh đồng hồ trên cùng: Giờ hiện tại & Đồng hồ đếm sự kiện -->
+    <header class="stage-header">
+      <div class="clock-block">
+        <div class="block-label">GIỜ HỆ THỐNG</div>
+        <div id="wall-clock" class="clock-digits">--:--:--</div>
+        <div id="wall-date" class="wall-date"></div>
+      </div>
+
+      <div class="status-center">
+        <div class="brand-badge">STAGE DISPLAY</div>
+        <div id="stage-blackout-badge" class="blackout-badge hidden">ĐANG ĐEN MÀN LED</div>
+      </div>
+
+      <div class="timer-block">
+        <div id="timer-label" class="block-label">ĐỒNG HỒ SỰ KIỆN</div>
+        <div id="event-timer" class="timer-digits">--:--</div>
+      </div>
+    </header>
+
+    <!-- Biểu ngữ tin nhắn khẩn từ kỹ thuật viên gửi MC / Sân khấu -->
+    <section id="stage-message-banner" class="message-banner hidden" aria-live="assertive">
+      <div class="message-tag">TIN NHẮN SÂN KHẤU</div>
+      <div id="stage-message-text" class="message-text"></div>
+    </section>
+
+    <!-- Khu vực nội dung chính: Cue đang chạy + Ghi chú MC + Cue kế tiếp -->
+    <main class="stage-main">
+      <section class="panel-live">
+        <div class="panel-header-row">
+          <span class="pill-live">ĐANG CHẠY (LIVE)</span>
+          <span id="live-cue-sub" class="live-sub"></span>
+        </div>
+        <h1 id="live-cue-title" class="live-title">Chưa phát</h1>
+        <div class="note-divider">GHI CHÚ DIỄN GIẢ / KỸ THUẬT</div>
+        <div id="stage-note" class="stage-note is-empty">Chưa có ghi chú cho Cue hiện tại</div>
+      </section>
+
+      <aside class="panel-next">
+        <div class="pill-next">KẾ TIẾP (NEXT)</div>
+        <h2 id="next-cue-title" class="next-title">Trống</h2>
+        <div id="next-cue-note" class="next-note hidden"></div>
+      </aside>
+    </main>
+
+    <!-- Thanh nhịp Beat / BPM dưới cùng -->
+    <footer class="stage-footer">
+      <div class="bpm-meta">
+        <span class="bpm-label">NHỊP BEAT</span>
+        <span id="bpm-value" class="bpm-value">120 BPM</span>
+      </div>
+      <div class="beat-dots" aria-label="Nhịp 4 phách">
+        <span id="beat-dot-0" class="beat-dot">1</span>
+        <span id="beat-dot-1" class="beat-dot">2</span>
+        <span id="beat-dot-2" class="beat-dot">3</span>
+        <span id="beat-dot-3" class="beat-dot">4</span>
+      </div>
+      <div class="beat-bar-track">
+        <div id="beat-bar-fill" class="beat-bar-fill"></div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="src/stage/stage-app.js"></script>
+</body>
+</html>

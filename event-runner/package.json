@@ -1,14 +1,14 @@
 {
   "name": "event-runner",
-  "version": "2.4.0",
-  "description": "Phần mềm điều khiển sự kiện chạy nhạc và màn hình LED đồng bộ trong một cue",
+  "version": "3.0.0",
+  "description": "Phần mềm điều khiển sự kiện chuyên nghiệp: Nhạc + Màn LED + VJ 3 tầng + Overlays vMix + Stage Display + Đèn Beat DMX Art-Net/sACN + OSC/MIDI",
   "main": "main.js",
   "author": "Event Runner Team",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/logic.test.js",
-    "check": "node -e \"const fs=require('fs'),cp=require('child_process');['main.js','preload.js','src/shared/logic.js','src/shared/path-utils.js','src/control/audio-engine.js','src/control/midi-hotkey.js','src/control/control-app.js','src/output/output-app.js','tests/logic.test.js'].forEach(f=>{cp.execFileSync(process.execPath,['--check',f],{stdio:'inherit'})});console.log('Syntax OK');\"",
+    "test": "node --test tests/logic.test.js tests/protocols.test.js",
+    "check": "node -e \"const fs=require('fs'),path=require('path'),cp=require('child_process');const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):e.name.endsWith('.js')?[path.join(d,e.name)]:[]);const files=['main.js','preload.js',...walk('src'),...walk('tests')];files.forEach(f=>cp.execFileSync(process.execPath,['--check',f],{stdio:'inherit'}));console.log('Syntax OK ('+files.length+' files)');\"",
     "build": "electron-builder --win portable"
   },
   "dependencies": {
@@ -29,6 +29,7 @@
       "preload.js",
       "control.html",
       "output.html",
+      "stage.html",
       "src/**/*",
       "assets/**/*",
       "package.json"

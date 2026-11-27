@@ -11,6 +11,35 @@
 (function (root) {
   const logic = root.EventRunnerLogic;
 
+  /** Fallback tính năng lượng 3 dải tần (bass 20-160Hz, mid 160-2000Hz, high 2000-12000Hz) nếu chạy độc lập */
+  function computeThreeBandEnergyFallback(freqBuffer, sampleRate = 48000, fftSize = 2048) {
+    if (!freqBuffer || freqBuffer.length === 0) {
+      return { bass: 0, mid: 0, high: 0 };
+    }
+    const sr = Number(sampleRate) > 0 ? Number(sampleRate) : 48000;
+    const nFft = Number(fftSize) > 0 ? Number(fftSize) : freqBuffer.length * 2;
+    const binHz = sr / nFft;
+    const bandAvg = (lowHz, highHz) => {
+      const startBin = Math.max(0, Math.floor(lowHz / binHz));
+      const endBin = Math.min(freqBuffer.length - 1, Math.ceil(highHz / binHz));
+      if (endBin < startBin) return 0;
+      let sum = 0;
+      let count = 0;
+      for (let i = startBin; i <= endBin; i++) {
+        sum += freqBuffer[i];
+        count++;
+      }
+      if (count <= 0) return 0;
+      const avg = (sum / count) / 255;
+      return avg < 0 ? 0 : (avg > 1 ? 1 : avg);
+    };
+    return {
+      bass: bandAvg(20, 160),
+      mid: bandAvg(160, 2000),
+      high: bandAvg(2000, 12000)
+    };
+  }
+
   class AudioEngine {
     constructor() {
       this.ctx = null;
@@ -23,7 +52,11 @@
       // Nhánh phân tích bass
       this.internalAnalysisGate = null;
       this.externalAnalysisGate = null;
-      this.analysisMode = 'internal'; // 'internal' | 'external'
+      this.videoAnalysisGate = null;
+      this.videoBus = null;
+      this.videoOutGain = null;
+      this.liveVideoMap = new Map();
+      this.analysisMode = 'internal'; // 'internal' | 'external' | 'video'
       this.hp1 = null;
       this.hp2 = null;
       this.lp1 = null;
@@ -49,6 +82,7 @@
       this.fallbackTimer = null;
       this.fallbackDetector = null;
       this.fallbackBlockAcc = 0;
+      this.fallbackLastCtxTime = 0;
 
       // Tham số phân tích bass hiện hành
       this.bassConfig = {
@@ -201,11 +235,21 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       this.sfxMasterGain.connect(this.ctx.destination);
       this.freqBuffer = new Uint8Array(this.analyser.frequencyBinCount);
 
-      // Nhánh phân tích bass lấy TRƯỚC DelayNode (chuyển mạch sạch giữa nhạc phần mềm & Line-In Mixer/DJ)
+      // Nhánh phân tích bass lấy TRƯỚC DelayNode (chuyển mạch sạch giữa nhạc phần mềm, Line-In Mixer/DJ & tiếng video)
       this.internalAnalysisGate = this.ctx.createGain();
       this.externalAnalysisGate = this.ctx.createGain();
-      this.internalAnalysisGate.gain.value = this.analysisMode === 'external' ? 0 : 1;
+      this.videoAnalysisGate = this.ctx.createGain();
+      this.internalAnalysisGate.gain.value = this.analysisMode === 'internal' ? 1 : 0;
       this.externalAnalysisGate.gain.value = this.analysisMode === 'external' ? 1 : 0;
+      this.videoAnalysisGate.gain.value = this.analysisMode === 'video' ? 1 : 0;
+
+      // Nhánh video xem trước cục bộ (chỉ hoạt động khi Tập dượt / tắt LED)
+      this.videoBus = this.ctx.createGain();
+      this.videoOutGain = this.ctx.createGain();
+      this.videoOutGain.gain.value = 1;
+      this.videoBus.connect(this.videoAnalysisGate);
+      this.videoBus.connect(this.videoOutGain);
+      this.videoOutGain.connect(this.delayNode);
 
       // Nhánh thu ngoài từ Mixer / Soundcard (KHÔNG nối ra destination để chống hú/vọng loa)
       this.extGainNode = this.ctx.createGain();
@@ -239,9 +283,11 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       this.masterGain.connect(this.internalAnalysisGate);
       this.internalAnalysisGate.connect(this.hp1);
       this.externalAnalysisGate.connect(this.hp1);
+      this.videoAnalysisGate.connect(this.hp1);
       this.hp1.connect(this.hp2);
       this.hp2.connect(this.lp1);
       this.lp1.connect(this.lp2);
+      this.extAnalyser.connect(this.silentGain);
       this.silentGain.connect(this.ctx.destination);
 
       this._initBassWorklet();
@@ -249,7 +295,7 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       return this.ctx;
     }
 
-    /** Nạp AudioWorklet qua Blob URL; tự chuyển sang AnalyserNode dự phòng nếu lỗi */
+    /** Nạp AudioWorklet qua module tĩnh (hoặc Blob URL fallback), tự chuyển sang AnalyserNode nếu lỗi */
     _initBassWorklet() {
       if (this.workletInitPromise) return this.workletInitPromise;
 
@@ -259,12 +305,22 @@ registerProcessor('bass-onset', BassOnsetProcessor);
           return;
         }
 
-        let blobUrl = null;
         try {
-          const code = this._buildWorkletCode();
-          const blob = new Blob([code], { type: 'application/javascript' });
-          blobUrl = URL.createObjectURL(blob);
-          await this.ctx.audioWorklet.addModule(blobUrl);
+          try {
+            await this.ctx.audioWorklet.addModule('src/control/bass-onset-worklet.js');
+          } catch (staticErr) {
+            let blobUrl = null;
+            try {
+              const code = this._buildWorkletCode();
+              const blob = new Blob([code], { type: 'application/javascript' });
+              blobUrl = URL.createObjectURL(blob);
+              await this.ctx.audioWorklet.addModule(blobUrl);
+            } finally {
+              if (blobUrl) {
+                try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+              }
+            }
+          }
 
           if (!this.ctx || !this.lp2 || !this.silentGain) return;
           this.workletNode = new AudioWorkletNode(this.ctx, 'bass-onset', {
@@ -296,33 +352,30 @@ registerProcessor('bass-onset', BassOnsetProcessor);
           this.workletReady = true;
         } catch (err) {
           const reason = err && err.message ? err.message : String(err);
-          this._activateFallbackAnalyser(
-            `Không nạp được AudioWorklet (${reason}), đã tự chuyển sang bộ dò dự phòng AnalyserNode.`
-          );
-        } finally {
-          if (blobUrl) {
-            try { URL.revokeObjectURL(blobUrl); } catch (_) {}
-          }
+          console.warn('[AudioEngine] AudioWorklet fallback active:', reason);
+          this._activateFallbackAnalyser('');
         }
       })();
 
       return this.workletInitPromise;
     }
 
-    /** Phương án dự phòng dùng AnalyserNode (fftSize 512) chạy cùng thuật toán onset */
+    /** Phương án dự phòng dùng AnalyserNode (fftSize 2048) đồng bộ ctx.currentTime chạy cùng thuật toán onset */
     _activateFallbackAnalyser(message) {
       if (this.fallbackAnalyser) return;
-      if (typeof this.onWorkletFallback === 'function') {
+      if (message && typeof this.onWorkletFallback === 'function') {
         this.onWorkletFallback(message);
       }
-      if (!this.ctx || !this.lp2) return;
+      if (!this.ctx || !this.lp2 || !this.silentGain) return;
 
       this.fallbackAnalyser = this.ctx.createAnalyser();
-      this.fallbackAnalyser.fftSize = 512;
+      this.fallbackAnalyser.fftSize = 2048;
       this.lp2.connect(this.fallbackAnalyser);
+      this.fallbackAnalyser.connect(this.silentGain);
       this.fallbackBuffer = new Float32Array(this.fallbackAnalyser.fftSize);
+      this.fallbackLastCtxTime = 0;
       this.fallbackDetector = logic.createOnsetDetector({
-        sampleRate: this.ctx.sampleRate,
+        sampleRate: this.ctx.sampleRate || 48000,
         blockSize: 128,
         sens: this.bassConfig.sens,
         minIntervalMs: this.bassConfig.minInterval,
@@ -330,14 +383,40 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       });
 
       this.fallbackTimer = setInterval(() => {
-        if (!this.ctx || !this.fallbackAnalyser || (!this.activeDeck && !this.extActive)) return;
-        this.fallbackAnalyser.getFloatTimeDomainData(this.fallbackBuffer);
-        // Cắt thành 4 block 128 mẫu để chạy cùng thuật toán onset
+        if (!this.ctx || !this.fallbackAnalyser || (!this.activeDeck && !this.extActive && !this.isLiveVideoPlaying())) {
+          this.fallbackLastCtxTime = 0;
+          return;
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+        const sr = this.ctx.sampleRate || 48000;
+        const buf = this.fallbackBuffer;
+        const bufLen = buf.length;
+        const nowCtx = this.ctx.currentTime;
+        let nBlocks = 0;
+        if (this.fallbackLastCtxTime <= 0 || nowCtx < this.fallbackLastCtxTime || (nowCtx - this.fallbackLastCtxTime) > 0.25) {
+          nBlocks = 4;
+          this.fallbackLastCtxTime = nowCtx - (nBlocks * 128) / sr;
+        } else {
+          nBlocks = Math.min(
+            Math.floor(bufLen / 128),
+            Math.floor(((nowCtx - this.fallbackLastCtxTime) * sr) / 128)
+          );
+        }
+
         let emittedBeat = null;
-        for (let offset = 0; offset < 512; offset += 128) {
-          const slice = this.fallbackBuffer.subarray(offset, offset + 128);
-          const beat = this.fallbackDetector.processBlock(slice, this.ctx.currentTime + offset / this.ctx.sampleRate);
-          if (beat) emittedBeat = beat;
+        if (nBlocks > 0) {
+          this.fallbackAnalyser.getFloatTimeDomainData(buf);
+          const startSample = bufLen - nBlocks * 128;
+          for (let i = 0; i < nBlocks; i++) {
+            const off = startSample + i * 128;
+            const slice = buf.subarray(off, off + 128);
+            const blockTime = this.fallbackLastCtxTime + ((i + 1) * 128) / sr;
+            const beat = this.fallbackDetector.processBlock(slice, blockTime);
+            if (beat) emittedBeat = beat;
+          }
+          this.fallbackLastCtxTime += (nBlocks * 128) / sr;
         }
         if (emittedBeat && typeof this.onBassBeat === 'function') {
           this.onBassBeat(emittedBeat);
@@ -346,7 +425,7 @@ registerProcessor('bass-onset', BassOnsetProcessor);
         if (this.fallbackBlockAcc >= 2 && typeof this.onBassTelemetry === 'function') {
           this.fallbackBlockAcc = 0;
           const m = this.fallbackDetector.getLastMetrics();
-          this.onBassTelemetry({ o: m.o, threshold: m.threshold, env: m.env, t: this.ctx.currentTime });
+          this.onBassTelemetry({ o: m.o, threshold: m.threshold, env: m.env, t: nowCtx });
         }
       }, 16);
     }
@@ -390,6 +469,7 @@ registerProcessor('bass-onset', BassOnsetProcessor);
 
     /** Xóa bộ đệm bộ dò khi đổi/dừng nhạc */
     resetBassDetector() {
+      this.fallbackLastCtxTime = 0;
       if (this.workletNode && this.workletReady) {
         try {
           this.workletNode.port.postMessage({ type: 'reset' });
@@ -417,6 +497,9 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       [
         this.internalAnalysisGate,
         this.externalAnalysisGate,
+        this.videoAnalysisGate,
+        this.videoBus,
+        this.videoOutGain,
         this.extGainNode,
         this.extAnalyser,
         this.hp1,
@@ -432,9 +515,9 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       });
     }
 
-    /** Chuyển nguồn đưa vào bộ phân tích DSP: 'internal' (nhạc phần mềm) hoặc 'external' (Line-In Mixer/DJ) */
+    /** Chuyển nguồn đưa vào bộ phân tích DSP: 'internal' (nhạc phần mềm), 'external' (Mixer/DJ), hoặc 'video' (tiếng video cục bộ) */
     setAnalysisSourceMode(mode) {
-      const nextMode = mode === 'external' ? 'external' : 'internal';
+      const nextMode = (mode === 'external' || mode === 'video') ? mode : 'internal';
       if (this.analysisMode !== nextMode) {
         this.analysisMode = nextMode;
         this.resetBassDetector();
@@ -443,6 +526,72 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       const now = this.ctx.currentTime;
       this.internalAnalysisGate.gain.setTargetAtTime(nextMode === 'internal' ? 1 : 0, now, 0.01);
       this.externalAnalysisGate.gain.setTargetAtTime(nextMode === 'external' ? 1 : 0, now, 0.01);
+      if (this.videoAnalysisGate) {
+        this.videoAnalysisGate.gain.setTargetAtTime(nextMode === 'video' ? 1 : 0, now, 0.01);
+      }
+    }
+
+    /** Gắn / đồng bộ phần tử <video> đang phát cục bộ vào Web Audio để dò beat khi Tập dượt hoặc tắt cửa sổ LED */
+    syncLiveVideoElement(videoEl, shouldPlayOutput, cueVol0to1, attachIfNeeded, outVol0to1) {
+      if (!videoEl) return false;
+      let entry = this.liveVideoMap.get(videoEl) || null;
+      if (!entry && !attachIfNeeded) return false;
+
+      this.ensureContext();
+      if (!this.ctx) return false;
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+
+      if (!entry) {
+        try {
+          const source = this.ctx.createMediaElementSource(videoEl);
+          const gain = this.ctx.createGain();
+          source.connect(gain);
+          gain.connect(this.videoBus);
+          entry = { source, gain, targetVol: 0 };
+          this.liveVideoMap.set(videoEl, entry);
+        } catch (_) {
+          return false;
+        }
+      }
+
+      const rawCueVol = logic.clamp(cueVol0to1 ?? (shouldPlayOutput ? 1 : 0), 0, 1);
+      const nextCueVol = (shouldPlayOutput || attachIfNeeded) ? rawCueVol : 0;
+      const resolvedOutVol = outVol0to1 !== undefined
+        ? (shouldPlayOutput ? logic.clamp(outVol0to1, 0, 1) : 0)
+        : (shouldPlayOutput ? 1 : 0);
+
+      entry.targetVol = nextCueVol;
+      entry.gain.gain.setTargetAtTime(nextCueVol, this.ctx.currentTime, 0.012);
+      if (this.videoOutGain) {
+        this.videoOutGain.gain.setTargetAtTime(resolvedOutVol, this.ctx.currentTime, 0.012);
+      }
+      videoEl.muted = false;
+      videoEl.volume = 1;
+      return true;
+    }
+
+    disconnectLiveVideoElement(videoEl) {
+      if (!videoEl) return;
+      const entry = this.liveVideoMap.get(videoEl);
+      if (!entry) return;
+      this.liveVideoMap.delete(videoEl);
+      try { entry.source.disconnect(); } catch (_) {}
+      try { entry.gain.disconnect(); } catch (_) {}
+    }
+
+    isLiveVideoPlaying() {
+      for (const [videoEl, entry] of this.liveVideoMap.entries()) {
+        if (!videoEl || !videoEl.isConnected) {
+          this.disconnectLiveVideoElement(videoEl);
+          continue;
+        }
+        if (!videoEl.paused && !videoEl.ended && entry && entry.targetVol > 0.001) {
+          return true;
+        }
+      }
+      return false;
     }
 
     /** Lấy danh sách thiết bị thu âm (Line-In / USB Soundcard / Mixer / Mic) */
@@ -451,6 +600,19 @@ registerProcessor('bass-onset', BassOnsetProcessor);
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
         const devices = await navigator.mediaDevices.enumerateDevices();
         return devices.filter((d) => d.kind === 'audioinput');
+      } catch (_) {
+        return [];
+      }
+    }
+
+    /** Lấy danh sách thiết bị Camera / Video Capture */
+    async listVideoInputDevices() {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          return [];
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return Array.isArray(devices) ? devices.filter((d) => d && d.kind === 'videoinput') : [];
       } catch (_) {
         return [];
       }
@@ -957,6 +1119,63 @@ registerProcessor('bass-onset', BassOnsetProcessor);
       return bars;
     }
 
+    /** Đọc năng lượng 3 dải (bass, mid, high trong [0, 1]) và phổ 48 cột từ nguồn đang phát */
+    sampleAudioBands() {
+      if (!this.ctx) {
+        return { bass: 0, mid: 0, high: 0, spectrum: new Array(48).fill(0) };
+      }
+
+      const hasPlayingDeck = Boolean(
+        this.activeDeck &&
+        this.activeDeck.audio &&
+        !this.activeDeck.audio.paused &&
+        !this.activeDeck.audio.ended
+      );
+      const hasFadingDeck = Boolean(
+        this.fadingDecks &&
+        Array.from(this.fadingDecks).some((d) => d && d.audio && !d.audio.paused && !d.audio.ended)
+      );
+      const hasLiveVideo = this.isLiveVideoPlaying();
+      const internalActive = (hasPlayingDeck || hasFadingDeck || hasLiveVideo) && this.analyser && this.freqBuffer;
+      const externalActive = !internalActive && Boolean(this.extActive && this.extAnalyser && this.extFreqBuffer);
+
+      let freqBuffer = null;
+      let fftSize = 2048;
+      let spectrum = null;
+
+      if (internalActive) {
+        spectrum = this.sampleSpectrum();
+        freqBuffer = this.freqBuffer;
+        fftSize = this.analyser.fftSize || 2048;
+      } else if (externalActive) {
+        const ext = this.sampleExternalSpectrum();
+        spectrum = ext && Array.isArray(ext.bars) ? ext.bars : new Array(48).fill(0);
+        freqBuffer = this.extFreqBuffer;
+        fftSize = this.extAnalyser.fftSize || 2048;
+      } else {
+        return { bass: 0, mid: 0, high: 0, spectrum: new Array(48).fill(0) };
+      }
+
+      const sampleRate = this.ctx.sampleRate || 48000;
+      const activeLogic = root.EventRunnerLogic || logic;
+      const rawBands = (activeLogic && typeof activeLogic.computeThreeBandEnergy === 'function')
+        ? activeLogic.computeThreeBandEnergy(freqBuffer, sampleRate, fftSize)
+        : computeThreeBandEnergyFallback(freqBuffer, sampleRate, fftSize);
+
+      const clamp01 = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return 0;
+        return n < 0 ? 0 : (n > 1 ? 1 : n);
+      };
+
+      return {
+        bass: clamp01(rawBands && rawBands.bass),
+        mid: clamp01(rawBands && rawBands.mid),
+        high: clamp01(rawBands && rawBands.high),
+        spectrum
+      };
+    }
+
     /** Giải mã waveform (cache tối đa 20 file) */
     async getWaveformPeaks(filePath, projectFilePath, numBins = 220) {
       if (!filePath) return null;
@@ -999,4 +1218,4 @@ registerProcessor('bass-onset', BassOnsetProcessor);
   }
 
   root.EventRunnerAudioEngine = AudioEngine;
-})(window);
+})(typeof window !== 'undefined' ? window : globalThis);

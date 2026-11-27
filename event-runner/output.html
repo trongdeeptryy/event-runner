@@ -2,25 +2,47 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; media-src 'self' file: data: blob: mediastream:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none';">
   <title>EVENT RUNNER — Màn hình LED</title>
   <link rel="stylesheet" href="src/styles/output.css">
 </head>
 <body>
-  <!-- Lớp rung nhẹ liên tục làm nền (transform thuần GPU bằng requestAnimationFrame) -->
-  <div id="idle">
-    <!-- Sân khấu chịu hiệu ứng beat FX (element.animate cộng dồn bên trong #idle) -->
-    <div id="stage">
-      <div id="layer-container"></div>
+  <div id="output-mapping-root">
+    <!-- Lớp rung nhẹ liên tục làm nền (transform thuần GPU bằng requestAnimationFrame) -->
+    <div id="idle">
+      <!-- Sân khấu chịu hiệu ứng beat FX + 3 tầng VJ -->
+      <div id="stage">
+        <div id="layer-container"></div>
+        <div id="vj-layer-2" class="vj-layer"></div>
+        <div id="vj-layer-3" class="vj-layer"></div>
+      </div>
     </div>
-  </div>
 
-  <!-- Lớp chớp trắng toàn màn khi có flash beat -->
-  <div id="flash-overlay"></div>
+    <!-- Lớp hiệu ứng Glitch / RGB Split / Mirror / Pixelate -->
+    <canvas id="fx-glitch-canvas"></canvas>
 
-  <!-- Lớp chữ hiển thị theo cue trên LED -->
-  <div id="text-overlay" class="pos-bottom hidden">
-    <div id="text-box"></div>
+    <!-- Lớp chớp đèn LED theo nhịp Beat / Audio -->
+    <canvas id="beat-led-canvas"></canvas>
+
+    <!-- Lớp chớp trắng toàn màn khi có flash beat / flash-cut -->
+    <div id="flash-overlay"></div>
+
+    <!-- Lớp phủ đồ họa vMix (Lower Third, Logo góc, Đồng hồ, Chữ chạy) -->
+    <div id="overlays-root">
+      <div id="ov-lower-third" class="ov-layer hidden"></div>
+      <div id="ov-logo" class="ov-layer hidden"></div>
+      <div id="ov-timer" class="ov-layer hidden"></div>
+      <div id="ov-ticker" class="ov-layer hidden"></div>
+    </div>
+
+    <!-- Lớp chữ hiển thị theo cue trên LED -->
+    <div id="text-overlay" class="pos-bottom hidden">
+      <div id="text-box"></div>
+    </div>
+
+    <!-- Lớp tối viền & Dimmer tổng -->
+    <div id="master-vignette"></div>
+    <div id="master-dimmer"></div>
   </div>
 
   <!-- Lớp phủ đen màn (panic B) -->
@@ -33,6 +55,8 @@
   </div>
 
   <script src="src/shared/logic.js"></script>
+  <script src="src/output/vj-generators.js"></script>
+  <script src="src/output/led-beat-engine.js"></script>
   <script src="src/output/output-app.js"></script>
 </body>
 </html>

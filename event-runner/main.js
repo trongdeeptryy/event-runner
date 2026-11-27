@@ -35,14 +35,46 @@ const IS_SMOKE = process.env.EVENT_RUNNER_SMOKE === '1';
 
 let controlWindow = null;
 let ledWindow = null;
+let stageWindow = null;
 let powerBlockerId = null;
 let isQuitting = false;
 let currentLedDisplayId = null;
 let currentLedMode = 'closed'; // 'closed' | 'fullscreen' | 'preview-window'
+let currentStageDisplayId = null;
+let currentStageMode = 'closed'; // 'closed' | 'fullscreen' | 'preview-window'
+let lastStagePayload = null;
+let lastPublicStageSig = '';
 let hotplugTimer = null;
 let recoverTimer = null;
+let stageRecoverTimer = null;
 let lastProjectFilePath = null;
 let isShowRunning = false;
+
+// Động cơ DMX Art-Net/sACN & OSC UDP (khởi tạo an toàn)
+let dmxEngine = null;
+let oscServer = null;
+
+function getDmxEngine() {
+  if (dmxEngine) return dmxEngine;
+  try {
+    const { DmxEngine } = require('./src/main/dmx-engine');
+    dmxEngine = new DmxEngine();
+  } catch (err) {
+    logError('init:dmx-engine', err);
+  }
+  return dmxEngine;
+}
+
+function getOscServer() {
+  if (oscServer) return oscServer;
+  try {
+    const { OscServer } = require('./src/main/osc-server');
+    oscServer = new OscServer();
+  } catch (err) {
+    logError('init:osc-server', err);
+  }
+  return oscServer;
+}
 
 // Biến cho Remote LAN Server
 let remoteHttpServer = null;
@@ -55,6 +87,14 @@ let remoteState = {
   liveName: 'Chưa phát',
   nextName: 'Trống',
   blackout: false,
+  bpm: 120,
+  ledMode: 'off',
+  overlays: { ov1: false, ov2: false, ov3: false, ov4: false },
+  sfxNames: [],
+  stageNote: '',
+  timerText: '--:--',
+  stageMessage: '',
+  timerUrgent: false,
   clients: 0
 };
 
@@ -350,6 +390,18 @@ function openLedWindow(preferredDisplayId) {
   return getLedStatusPayload();
 }
 
+/** Tạo webPreferences chuẩn cho các cửa sổ Electron của app */
+function createAppWebPreferences() {
+  return {
+    preload: path.join(__dirname, 'preload.js'),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: false,
+    backgroundThrottling: false,
+    webSecurity: false
+  };
+}
+
 /** Đóng cửa sổ LED */
 function closeLedWindow() {
   clearTimeout(recoverTimer);
@@ -361,6 +413,214 @@ function closeLedWindow() {
   currentLedDisplayId = null;
   notifyDisplayAndLedState();
   return getLedStatusPayload();
+}
+
+/** Lấy trạng thái cửa sổ Stage Display hiện tại */
+function getStageStatusPayload() {
+  const isOpen = Boolean(stageWindow && !stageWindow.isDestroyed());
+  const displays = getFormattedDisplays();
+  const activeDisplay = displays.find((d) => String(d.id) === String(currentStageDisplayId)) || null;
+  return {
+    isOpen,
+    mode: isOpen ? currentStageMode : 'closed',
+    displayId: isOpen ? currentStageDisplayId : null,
+    displayLabel: activeDisplay
+      ? activeDisplay.label
+      : (currentStageMode === 'preview-window' ? 'Cửa sổ xem trước' : ''),
+    width: activeDisplay ? activeDisplay.bounds.width : (isOpen ? 960 : 0),
+    height: activeDisplay ? activeDisplay.bounds.height : (isOpen ? 540 : 0)
+  };
+}
+
+/** Gửi trạng thái Stage Display về cửa sổ điều khiển */
+function notifyStageStatusChanged() {
+  if (!controlWindow || controlWindow.isDestroyed()) return;
+  controlWindow.webContents.send('stage-status-changed', {
+    stage: getStageStatusPayload(),
+    displays: getFormattedDisplays()
+  });
+}
+
+/**
+ * Mở cửa sổ Stage Display (FreeShow-style) trên màn hình chỉ định hoặc cửa sổ 960x540
+ */
+function openStageWindow(displayId) {
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+
+  let selection = null;
+  if (displayId === 'preview') {
+    selection = { mode: 'preview-window', display: primary };
+  } else if (displayId !== undefined && displayId !== null && displayId !== 'auto' && displayId !== '') {
+    const manual = displays.find((d) => String(d.id) === String(displayId));
+    if (manual) {
+      selection = {
+        mode: manual.id === primary.id && displays.length === 1 ? 'preview-window' : 'fullscreen',
+        display: manual
+      };
+    }
+  }
+
+  if (!selection) {
+    const freeExternal = displays.filter(
+      (d) => d.id !== primary.id && String(d.id) !== String(currentLedDisplayId)
+    );
+    if (freeExternal.length > 0) {
+      selection = { mode: 'fullscreen', display: freeExternal[0] };
+    } else if (primary) {
+      selection = { mode: 'preview-window', display: primary };
+    }
+  }
+
+  if (!selection || !selection.display) {
+    return getStageStatusPayload();
+  }
+
+  const targetDisplay = selection.display;
+  const isFullscreen = selection.mode === 'fullscreen';
+
+  if (stageWindow && !stageWindow.isDestroyed()) {
+    if (String(currentStageDisplayId) === String(targetDisplay.id) && currentStageMode === selection.mode) {
+      if (isFullscreen) {
+        stageWindow.showInactive();
+      } else {
+        stageWindow.show();
+      }
+      return getStageStatusPayload();
+    }
+    try {
+      stageWindow.destroy();
+    } catch (_) {}
+    stageWindow = null;
+  }
+
+  currentStageDisplayId = targetDisplay.id;
+  currentStageMode = selection.mode;
+
+  const winOptions = isFullscreen
+    ? {
+        x: targetDisplay.bounds.x,
+        y: targetDisplay.bounds.y,
+        width: targetDisplay.bounds.width,
+        height: targetDisplay.bounds.height,
+        frame: false,
+        fullscreen: true,
+        alwaysOnTop: true,
+        focusable: false,
+        skipTaskbar: true,
+        resizable: false,
+        movable: false,
+        backgroundColor: '#05080f',
+        show: false,
+        title: 'EVENT RUNNER — Stage Display',
+        webPreferences: createAppWebPreferences()
+      }
+    : {
+        x: targetDisplay.bounds.x + 80,
+        y: targetDisplay.bounds.y + 80,
+        width: 960,
+        height: 540,
+        frame: true,
+        fullscreen: false,
+        alwaysOnTop: false,
+        focusable: true,
+        skipTaskbar: false,
+        resizable: true,
+        backgroundColor: '#05080f',
+        show: false,
+        title: 'EVENT RUNNER — Stage Display (Cửa sổ xem trước)',
+        webPreferences: createAppWebPreferences()
+      };
+
+  stageWindow = new BrowserWindow(winOptions);
+
+  if (isFullscreen) {
+    stageWindow.setAlwaysOnTop(true, 'screen-saver');
+    stageWindow.setBounds({
+      x: targetDisplay.bounds.x,
+      y: targetDisplay.bounds.y,
+      width: targetDisplay.bounds.width,
+      height: targetDisplay.bounds.height
+    });
+  }
+
+  stageWindow.setMenuBarVisibility(false);
+  stageWindow.webContents.on('will-navigate', (ev) => {
+    ev.preventDefault();
+  });
+  stageWindow.loadFile(path.join(__dirname, 'stage.html'));
+
+  stageWindow.once('ready-to-show', () => {
+    if (!stageWindow || stageWindow.isDestroyed()) return;
+    if (isFullscreen) {
+      stageWindow.showInactive();
+      stageWindow.setAlwaysOnTop(true, 'screen-saver');
+    } else if (!IS_SMOKE) {
+      stageWindow.showInactive();
+    }
+    notifyStageStatusChanged();
+  });
+
+  stageWindow.on('closed', () => {
+    stageWindow = null;
+    currentStageMode = 'closed';
+    currentStageDisplayId = null;
+    notifyStageStatusChanged();
+  });
+
+  stageWindow.webContents.on('render-process-gone', (_event, details) => {
+    logError('stage:render-process-gone', JSON.stringify(details));
+    if (isQuitting) return;
+    const prevDisplay = currentStageDisplayId;
+    try {
+      if (stageWindow && !stageWindow.isDestroyed()) stageWindow.destroy();
+    } catch (_) {}
+    stageWindow = null;
+    currentStageMode = 'closed';
+    notifyStageStatusChanged();
+    clearTimeout(stageRecoverTimer);
+    stageRecoverTimer = setTimeout(() => {
+      if (!isQuitting) {
+        openStageWindow(prevDisplay || 'auto');
+      }
+    }, 500);
+  });
+
+  return getStageStatusPayload();
+}
+
+/** Đóng cửa sổ Stage Display */
+function closeStageWindow() {
+  clearTimeout(stageRecoverTimer);
+  if (stageWindow && !stageWindow.isDestroyed()) {
+    stageWindow.destroy();
+  }
+  stageWindow = null;
+  currentStageMode = 'closed';
+  currentStageDisplayId = null;
+  notifyStageStatusChanged();
+  return getStageStatusPayload();
+}
+
+/** Dừng toàn bộ dịch vụ nền (Remote LAN, DMX, OSC, Stage & LED) khi thoát */
+function stopAllSubsystems() {
+  stopRemoteServer();
+  if (dmxEngine) {
+    try {
+      dmxEngine.stop();
+    } catch (err) {
+      logError('stopAllSubsystems:dmx', err);
+    }
+  }
+  if (oscServer) {
+    try {
+      oscServer.stop();
+    } catch (err) {
+      logError('stopAllSubsystems:osc', err);
+    }
+  }
+  closeStageWindow();
+  closeLedWindow();
 }
 
 /** Tạo cửa sổ bảng điều khiển chính */
@@ -376,17 +636,10 @@ function createControlWindow() {
     minWidth: 1160,
     minHeight: 680,
     backgroundColor: '#0F1117',
-    title: 'EVENT RUNNER v2.4 — Bảng điều khiển sự kiện',
+    title: 'EVENT RUNNER v3.0 PRO — Bảng điều khiển sự kiện',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false,
-      webSecurity: false
-    }
+    webPreferences: createAppWebPreferences()
   });
 
   controlWindow.setMenuBarVisibility(false);
@@ -421,8 +674,7 @@ function createControlWindow() {
     });
     if (choice === 1) {
       isQuitting = true;
-      stopRemoteServer();
-      closeLedWindow();
+      stopAllSubsystems();
       controlWindow.destroy();
       app.quit();
     }
@@ -432,7 +684,7 @@ function createControlWindow() {
     controlWindow = null;
     if (!isQuitting) {
       isQuitting = true;
-      closeLedWindow();
+      stopAllSubsystems();
       app.quit();
     }
   });
@@ -443,6 +695,7 @@ function registerDisplayEvents() {
   screen.on('display-added', () => {
     const settings = loadSettings();
     notifyDisplayAndLedState('Phát hiện màn hình mới được kết nối...');
+    notifyStageStatusChanged();
     if (!settings.autoOpenLed) return;
 
     clearTimeout(hotplugTimer);
@@ -455,11 +708,18 @@ function registerDisplayEvents() {
         openLedWindow('auto');
       } else {
         notifyDisplayAndLedState();
+        notifyStageStatusChanged();
       }
     }, 1500);
   });
 
   screen.on('display-removed', (_event, oldDisplay) => {
+    if (stageWindow && !stageWindow.isDestroyed() && String(oldDisplay.id) === String(currentStageDisplayId)) {
+      closeStageWindow();
+    } else {
+      notifyStageStatusChanged();
+    }
+
     if (ledWindow && !ledWindow.isDestroyed() && String(oldDisplay.id) === String(currentLedDisplayId)) {
       closeLedWindow();
       notifyDisplayAndLedState('Cảnh báo: Màn hình LED vừa bị rút kết nối!');
@@ -470,6 +730,7 @@ function registerDisplayEvents() {
 
   screen.on('display-metrics-changed', () => {
     notifyDisplayAndLedState();
+    notifyStageStatusChanged();
   });
 }
 
@@ -490,7 +751,59 @@ function getLanUrls(port) {
   return urls;
 }
 
-/** HTML giao diện điện thoại cho Remote LAN (100% offline, tiếng Việt) */
+const ALLOWED_REMOTE_COMMANDS = new Set([
+  'GO',
+  'BACK',
+  'BLACK',
+  'STOP',
+  'FADE',
+  'TAP_BPM',
+  'OV1',
+  'OV2',
+  'OV3',
+  'OV4',
+  'FLASH_HIT',
+  'STROBE_HOLD_ON',
+  'STROBE_HOLD_OFF'
+]);
+
+function isAllowedRemoteCommand(cmd) {
+  if (typeof cmd !== 'string') return false;
+  return ALLOWED_REMOTE_COMMANDS.has(cmd) ||
+    /^SFX:[0-5]$/.test(cmd) ||
+    /^LED_MODE:[a-z0-9-]+$/i.test(cmd);
+}
+
+function getAuthRemoteStateSnapshot() {
+  return {
+    liveName: remoteState.liveName,
+    nextName: remoteState.nextName,
+    blackout: remoteState.blackout,
+    bpm: remoteState.bpm,
+    ledMode: remoteState.ledMode,
+    overlays: remoteState.overlays,
+    sfxNames: remoteState.sfxNames,
+    stageNote: remoteState.stageNote,
+    timerText: remoteState.timerText,
+    stageMessage: remoteState.stageMessage,
+    timerUrgent: remoteState.timerUrgent
+  };
+}
+
+function getPublicStageStateSnapshot() {
+  return {
+    liveName: remoteState.liveName,
+    nextName: remoteState.nextName,
+    bpm: remoteState.bpm,
+    stageNote: remoteState.stageNote,
+    timerText: remoteState.timerText,
+    stageMessage: remoteState.stageMessage,
+    timerUrgent: remoteState.timerUrgent,
+    blackout: remoteState.blackout
+  };
+}
+
+/** HTML giao diện điện thoại cho Remote LAN (100% offline, tiếng Việt, 4 tab) */
 function buildRemoteMobileHtml() {
   return `<!DOCTYPE html>
 <html lang="vi">
@@ -499,114 +812,470 @@ function buildRemoteMobileHtml() {
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>EVENT RUNNER — Điều khiển từ xa</title>
 <style>
-  *{box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}
-  body{margin:0;background:#0e1217;color:#dde5ee;display:flex;flex-direction:column;min-height:100vh;padding:16px;gap:14px}
-  h1{font-size:18px;margin:0;letter-spacing:.5px;color:#4cc9f0}
-  .card{background:#171c23;border:1px solid #2a323d;border-radius:10px;padding:14px}
-  .label{font-size:12px;color:#7d8a99;text-transform:uppercase}
-  .val{font-size:18px;font-weight:700;margin-top:4px;word-break:break-word}
-  .live{color:#ff4d3d}.next{color:#ffb020}
-  input,button{font-size:16px;border-radius:10px;border:1px solid #2a323d;padding:14px;color:#fff}
-  input{background:#0e1217;width:100%;text-align:center;font-size:24px;letter-spacing:8px}
-  button{cursor:pointer;font-weight:700}
-  .btn-go{background:#1e9e62;border-color:#2ee59d;padding:28px;font-size:28px;width:100%}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .btn-sec{background:#232b36}
-  .btn-blk{background:#523a12;border-color:#ffb020}
-  .btn-stp{background:#6b1915;border-color:#ff4d3d;width:100%;padding:18px}
-  .status{font-size:13px;color:#7d8a99;text-align:center}
+  *{box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#0c1017;color:#e4ebf5;display:flex;flex-direction:column;min-height:100vh;padding:12px;gap:10px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  h1{font-size:15px;margin:0;letter-spacing:.5px;color:#00d2ff}
+  .stage-link{font-size:12px;font-weight:700;color:#00d2ff;text-decoration:none;border:1px solid #1e4b63;background:#102230;padding:6px 10px;border-radius:8px}
+  .card{background:#151b24;border:1px solid #283344;border-radius:10px;padding:12px}
+  .label{font-size:11px;color:#8291a8;text-transform:uppercase;letter-spacing:.6px}
+  .val{font-size:16px;font-weight:700;margin-top:3px;word-break:break-word}
+  .live{color:#2ee59d}.next{color:#ffb020}
+  .meta-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:#b8c7dc}
+  .note-box{margin-top:8px;padding:8px;border-radius:8px;background:#0e131b;border:1px solid #232d3d;font-size:13px;color:#ffe6a3;white-space:pre-wrap;max-height:72px;overflow:auto}
+  input,button{font-size:15px;border-radius:10px;border:1px solid #2a3446;padding:12px;color:#fff;touch-action:manipulation}
+  input{background:#0b0f16;width:100%;text-align:center;font-size:24px;letter-spacing:8px}
+  button{cursor:pointer;font-weight:700;background:#1e2634}
+  button:active{transform:scale(0.98)}
+  .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .tab-btn{padding:10px 4px;font-size:12px;background:#151b24;border-color:#263143;color:#93a3ba}
+  .tab-btn.active{background:#0f2a3a;border-color:#00d2ff;color:#00d2ff}
+  .tab-pane{display:flex;flex-direction:column;gap:10px}
+  .btn-go{background:#158450;border-color:#2ee59d;padding:24px;font-size:24px;width:100%}
+  .row-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .btn-sec{background:#202938}
+  .btn-fade{background:#1b3348;border-color:#00d2ff}
+  .btn-blk{background:#4d3510;border-color:#ffb020}
+  .btn-blk.is-on{background:#b45309;color:#fff}
+  .btn-stp{background:#6b1915;border-color:#ff4d3d;width:100%;padding:16px}
+  .ov-btn{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;text-align:left;background:#161d29}
+  .ov-btn.is-on{background:#103846;border-color:#00d2ff}
+  .ov-state{font-size:11px;color:#8291a8}
+  .ov-btn.is-on .ov-state{color:#2ee59d}
+  .btn-flash{background:#3a2d0d;border-color:#fbbf24;padding:18px;font-size:16px}
+  .btn-strobe{background:#4c1528;border-color:#ff3b7f;padding:18px;font-size:16px;touch-action:none;user-select:none}
+  .btn-strobe.holding{background:#be185d;border-color:#fff}
+  .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mode-btn{padding:12px 8px;font-size:13px;background:#161d29}
+  .mode-btn.active{background:#0f2f42;border-color:#00d2ff;color:#00d2ff}
+  .sfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .sfx-btn{padding:20px 10px;background:#1b2433;border-color:#34435c;min-height:74px;font-size:15px}
+  .status{font-size:12px;color:#7d8a99;text-align:center}
   .hidden{display:none!important}
 </style>
 </head>
 <body>
-  <h1>EVENT RUNNER — REMOTE LAN</h1>
+  <div class="topbar">
+    <h1>EVENT RUNNER — REMOTE</h1>
+    <a class="stage-link" href="/stage">Mở /stage</a>
+  </div>
+
   <div id="auth-box" class="card">
     <div class="label">Nhập mã PIN 4 số trên máy tính</div>
     <input id="pin-input" type="password" inputmode="numeric" maxlength="4" placeholder="••••" style="margin:12px 0">
-    <button id="btn-connect" class="btn-go" style="padding:14px;font-size:18px">KẾT NỐI</button>
-    <div id="auth-err" class="status" style="color:#ff4d3d;margin-top:8px"></div>
+    <button id="btn-connect" class="btn-go" style="padding:14px;font-size:17px">KẾT NỐI</button>
+    <div id="auth-err" class="status" style="color:#ff5b5b;margin-top:8px"></div>
   </div>
-  <div id="ctrl-box" class="hidden" style="display:flex;flex-direction:column;gap:14px">
+
+  <div id="ctrl-box" class="hidden" style="display:flex;flex-direction:column;gap:10px">
     <div class="card">
       <div class="label">ĐANG CHẠY (LIVE)</div>
-      <div id="live-name" class="val live">---</div>
-      <div class="label" style="margin-top:10px">KẾ TIẾP (NEXT)</div>
-      <div id="next-name" class="val next">---</div>
+      <div id="live-name" class="val live">Chưa phát</div>
+      <div class="label" style="margin-top:8px">KẾ TIẾP (NEXT)</div>
+      <div id="next-name" class="val next">Trống</div>
+      <div class="meta-row">
+        <span>Đồng hồ: <strong id="timer-val">--:--</strong></span>
+        <span>Nhịp: <strong id="bpm-val">120 BPM</strong></span>
+      </div>
+      <div id="stage-note-box" class="note-box hidden"></div>
     </div>
-    <button class="btn-go" onclick="sendCmd('GO')">GO — CHẠY CUE</button>
-    <div class="row">
-      <button class="btn-sec" onclick="sendCmd('BACK')">← LÙI CUE</button>
-      <button id="btn-blk" class="btn-blk" onclick="sendCmd('BLACK')">ĐEN MÀN</button>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="show">Show</button>
+      <button class="tab-btn" data-tab="overlays">Overlays</button>
+      <button class="tab-btn" data-tab="led">LED Beat</button>
+      <button class="tab-btn" data-tab="sfx">SFX</button>
     </div>
-    <button class="btn-stp" onclick="sendCmd('STOP')">DỪNG TẤT CẢ</button>
+
+    <div id="pane-show" class="tab-pane">
+      <button id="btn-go" class="btn-go">GO — CHẠY CUE</button>
+      <div class="row-3">
+        <button id="btn-back" class="btn-sec">← LÙI</button>
+        <button id="btn-fade" class="btn-fade">FADE</button>
+        <button id="btn-blk" class="btn-blk">ĐEN MÀN</button>
+      </div>
+      <button id="btn-stop" class="btn-stp">DỪNG TẤT CẢ</button>
+    </div>
+
+    <div id="pane-overlays" class="tab-pane hidden">
+      <div class="row-2">
+        <button class="ov-btn" data-ov="OV1" id="ov-btn-1">
+          <span>OV1 — Lower Third</span>
+          <span class="ov-state" id="ov-st-1">Đang tắt</span>
+        </button>
+        <button class="ov-btn" data-ov="OV2" id="ov-btn-2">
+          <span>OV2 — Logo Góc</span>
+          <span class="ov-state" id="ov-st-2">Đang tắt</span>
+        </button>
+        <button class="ov-btn" data-ov="OV3" id="ov-btn-3">
+          <span>OV3 — Đồng hồ</span>
+          <span class="ov-state" id="ov-st-3">Đang tắt</span>
+        </button>
+        <button class="ov-btn" data-ov="OV4" id="ov-btn-4">
+          <span>OV4 — Chữ chạy</span>
+          <span class="ov-state" id="ov-st-4">Đang tắt</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="pane-led" class="tab-pane hidden">
+      <div class="row-2">
+        <button id="btn-flash-hit" class="btn-flash">⚡ FLASH HIT</button>
+        <button id="btn-strobe-hold" class="btn-strobe">💥 GIỮ CHỚP</button>
+      </div>
+      <button id="btn-tap-bpm" class="btn-sec">🥁 TAP BPM (<span id="bpm-btn-val">120</span>)</button>
+      <div class="label" style="margin-top:4px">Chế độ chớp LED theo beat</div>
+      <div class="mode-grid" id="led-mode-grid">
+        <button class="mode-btn" data-mode="off">Tắt chớp</button>
+        <button class="mode-btn" data-mode="flash">Chớp Flash</button>
+        <button class="mode-btn" data-mode="wash">Phủ Wash</button>
+        <button class="mode-btn" data-mode="edge-chase">Chạy Viền</button>
+        <button class="mode-btn" data-mode="quadrant">Chớp 4 Góc</button>
+        <button class="mode-btn" data-mode="matrix-bars">Thanh Equalizer</button>
+        <button class="mode-btn" data-mode="invert-hit">Đảo Màu Kick</button>
+        <button class="mode-btn" data-mode="blinder">Đèn Blinder</button>
+      </div>
+    </div>
+
+    <div id="pane-sfx" class="tab-pane hidden">
+      <div class="sfx-grid" id="sfx-grid">
+        <button class="sfx-btn" data-sfx="0">SFX 1</button>
+        <button class="sfx-btn" data-sfx="1">SFX 2</button>
+        <button class="sfx-btn" data-sfx="2">SFX 3</button>
+        <button class="sfx-btn" data-sfx="3">SFX 4</button>
+        <button class="sfx-btn" data-sfx="4">SFX 5</button>
+        <button class="sfx-btn" data-sfx="5">SFX 6</button>
+      </div>
+    </div>
+
     <div id="conn-status" class="status">Đã kết nối</div>
   </div>
+
 <script>
-  let ws=null, authed=false;
-  const authBox=document.getElementById('auth-box');
-  const ctrlBox=document.getElementById('ctrl-box');
-  const pinInput=document.getElementById('pin-input');
-  const authErr=document.getElementById('auth-err');
-  document.getElementById('btn-connect').onclick=connect;
-  function connect(){
-    const pin=pinInput.value.trim();
-    if(pin.length!==4){authErr.textContent='Vui lòng nhập đủ 4 số PIN';return;}
-    authErr.textContent='Đang kết nối...';
-    const proto=location.protocol==='https:'?'wss://':'ws://';
-    ws=new WebSocket(proto+location.host);
-    ws.onopen=()=>ws.send(JSON.stringify({type:'auth',pin}));
-    ws.onmessage=(ev)=>{
-      const msg=JSON.parse(ev.data);
-      if(msg.type==='auth-ok'){
-        authed=true;
-        authBox.classList.add('hidden');
-        ctrlBox.classList.remove('hidden');
-        updateUi(msg.state);
-      }else if(msg.type==='auth-fail'){
-        authErr.textContent='Sai mã PIN!';
-        ws.close();
-      }else if(msg.type==='state'){
-        updateUi(msg.state);
+  (function(){
+    let ws=null, authed=false, strobeHolding=false;
+    const authBox=document.getElementById('auth-box');
+    const ctrlBox=document.getElementById('ctrl-box');
+    const pinInput=document.getElementById('pin-input');
+    const authErr=document.getElementById('auth-err');
+
+    document.getElementById('btn-connect').addEventListener('click', connect);
+    pinInput.addEventListener('keydown', function(e){ if(e.key==='Enter') connect(); });
+
+    function sendCmd(cmd){
+      if(!ws || ws.readyState!==1 || !authed) return;
+      if(cmd==='STOP' && !confirm('Xác nhận DỪNG TẤT CẢ?')) return;
+      ws.send(JSON.stringify({type:'cmd', cmd:cmd}));
+    }
+
+    function connect(){
+      const pin=pinInput.value.trim();
+      if(pin.length!==4){ authErr.textContent='Vui lòng nhập đủ 4 số PIN'; return; }
+      authErr.textContent='Đang kết nối...';
+      const proto=location.protocol==='https:'?'wss://':'ws://';
+      ws=new WebSocket(proto+location.host);
+      ws.onopen=function(){ ws.send(JSON.stringify({type:'auth', pin:pin})); };
+      ws.onmessage=function(ev){
+        let msg;
+        try{ msg=JSON.parse(ev.data); }catch(_){ return; }
+        if(msg.type==='auth-ok'){
+          authed=true;
+          authBox.classList.add('hidden');
+          ctrlBox.classList.remove('hidden');
+          updateUi(msg.state);
+        }else if(msg.type==='auth-fail'){
+          authErr.textContent='Sai mã PIN!';
+          ws.close();
+        }else if(msg.type==='state'){
+          updateUi(msg.state);
+        }
+      };
+      ws.onclose=function(){
+        if(strobeHolding){ strobeHolding=false; }
+        if(authed){
+          document.getElementById('conn-status').textContent='Mất kết nối — bấm tải lại trang';
+        }
+      };
+    }
+
+    function isOvActive(ovVal){
+      if(ovVal && typeof ovVal==='object') return Boolean(ovVal.active);
+      return Boolean(ovVal);
+    }
+
+    function updateUi(st){
+      if(!st) return;
+      document.getElementById('live-name').textContent=st.liveName||'Chưa phát';
+      document.getElementById('next-name').textContent=st.nextName||'Trống';
+      document.getElementById('timer-val').textContent=st.timerText||'--:--';
+      const bpm=Math.round(Number(st.bpm)||120);
+      document.getElementById('bpm-val').textContent=bpm+' BPM';
+      document.getElementById('bpm-btn-val').textContent=String(bpm);
+
+      const noteBox=document.getElementById('stage-note-box');
+      const noteText=(st.stageNote||'').trim();
+      if(noteText){
+        noteBox.textContent=noteText;
+        noteBox.classList.remove('hidden');
+      }else{
+        noteBox.classList.add('hidden');
       }
-    };
-    ws.onclose=()=>{
-      if(authed){
-        document.getElementById('conn-status').textContent='Mất kết nối — bấm tải lại trang';
+
+      const blkBtn=document.getElementById('btn-blk');
+      blkBtn.textContent=st.blackout?'BỎ ĐEN MÀN':'ĐEN MÀN';
+      blkBtn.classList.toggle('is-on', Boolean(st.blackout));
+
+      const ov=st.overlays||{};
+      for(let i=1;i<=4;i++){
+        const on=isOvActive(ov['ov'+i]);
+        const btn=document.getElementById('ov-btn-'+i);
+        const lbl=document.getElementById('ov-st-'+i);
+        if(btn) btn.classList.toggle('is-on', on);
+        if(lbl) lbl.textContent=on?'Đang BẬT':'Đang tắt';
       }
-    };
-  }
-  function updateUi(st){
-    if(!st)return;
-    document.getElementById('live-name').textContent=st.liveName||'Chưa phát';
-    document.getElementById('next-name').textContent=st.nextName||'Trống';
-    document.getElementById('btn-blk').textContent=st.blackout?'BỎ ĐEN MÀN':'ĐEN MÀN';
-  }
-  function sendCmd(cmd){
-    if(!ws||ws.readyState!==1)return;
-    if(cmd==='STOP'&&!confirm('Xác nhận DỪNG TẤT CẢ?'))return;
-    ws.send(JSON.stringify({type:'cmd',cmd}));
-  }
+
+      const activeMode=String(st.ledMode||'off');
+      document.querySelectorAll('.mode-btn').forEach(function(b){
+        b.classList.toggle('active', b.getAttribute('data-mode')===activeMode);
+      });
+
+      const sfxNames=Array.isArray(st.sfxNames)?st.sfxNames:[];
+      document.querySelectorAll('.sfx-btn').forEach(function(b, idx){
+        const raw=sfxNames[idx];
+        const name=(raw && typeof raw==='object') ? raw.name : raw;
+        b.textContent=(name && String(name).trim()) ? String(name).trim() : ('SFX '+(idx+1));
+      });
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        const target=btn.getAttribute('data-tab');
+        document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b===btn); });
+        ['show','overlays','led','sfx'].forEach(function(name){
+          const pane=document.getElementById('pane-'+name);
+          if(pane) pane.classList.toggle('hidden', name!==target);
+        });
+      });
+    });
+
+    document.getElementById('btn-go').addEventListener('click', function(){ sendCmd('GO'); });
+    document.getElementById('btn-back').addEventListener('click', function(){ sendCmd('BACK'); });
+    document.getElementById('btn-fade').addEventListener('click', function(){ sendCmd('FADE'); });
+    document.getElementById('btn-blk').addEventListener('click', function(){ sendCmd('BLACK'); });
+    document.getElementById('btn-stop').addEventListener('click', function(){ sendCmd('STOP'); });
+    document.getElementById('btn-flash-hit').addEventListener('click', function(){ sendCmd('FLASH_HIT'); });
+    document.getElementById('btn-tap-bpm').addEventListener('click', function(){ sendCmd('TAP_BPM'); });
+
+    document.querySelectorAll('.ov-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        sendCmd(btn.getAttribute('data-ov'));
+      });
+    });
+
+    document.querySelectorAll('.mode-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        sendCmd('LED_MODE:'+btn.getAttribute('data-mode'));
+      });
+    });
+
+    document.querySelectorAll('.sfx-btn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        sendCmd('SFX:'+btn.getAttribute('data-sfx'));
+      });
+    });
+
+    const strobeBtn=document.getElementById('btn-strobe-hold');
+    function beginStrobe(ev){
+      if(ev) ev.preventDefault();
+      if(strobeHolding) return;
+      strobeHolding=true;
+      strobeBtn.classList.add('holding');
+      sendCmd('STROBE_HOLD_ON');
+    }
+    function endStrobe(){
+      if(!strobeHolding) return;
+      strobeHolding=false;
+      strobeBtn.classList.remove('holding');
+      sendCmd('STROBE_HOLD_OFF');
+    }
+    strobeBtn.addEventListener('pointerdown', beginStrobe);
+    strobeBtn.addEventListener('pointerup', endStrobe);
+    strobeBtn.addEventListener('pointercancel', endStrobe);
+    strobeBtn.addEventListener('pointerleave', endStrobe);
+    window.addEventListener('blur', endStrobe);
+  })();
 </script>
 </body>
 </html>`;
 }
 
-/** Phát trạng thái show tới tất cả thiết bị remote đã xác thực */
+/** HTML giao diện Web Stage Display (/stage — chỉ đọc, tự đồng bộ qua WebSocket) */
+function buildWebStageHtml() {
+  return `<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>EVENT RUNNER — Web Stage Display</title>
+<style>
+  *{box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}
+  html,body{margin:0;padding:0;width:100%;height:100%;background:#05080f;color:#f3f7ff}
+  body{display:flex;flex-direction:column;padding:14px;gap:12px}
+  .hidden{display:none!important}
+  .hdr{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;background:#0d1320;border:2px solid #23314d;border-radius:12px;padding:12px 16px}
+  .lbl{font-size:11px;font-weight:800;letter-spacing:1.2px;color:#8ea0bf;text-transform:uppercase}
+  .mono{font-family:'Cascadia Mono','Consolas',monospace;font-variant-numeric:tabular-nums;font-weight:900}
+  .clock{font-size:clamp(24px,5vw,56px)}
+  .timer{font-size:clamp(26px,5.4vw,60px);color:#00d2ff;text-align:right}
+  .timer.urgent{color:#ff3b3b}
+  .mid-hdr{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .badge{font-size:11px;font-weight:800;color:#00d2ff;background:rgba(0,210,255,.12);border:1px solid rgba(0,210,255,.35);padding:4px 10px;border-radius:999px}
+  .blk-badge{font-size:12px;font-weight:900;background:#ff3b3b;color:#fff;padding:4px 10px;border-radius:6px}
+  .msg-banner{background:linear-gradient(90deg,#ffb020,#ff8c00);color:#0b0f17;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px}
+  .msg-tag{background:#0b0f17;color:#ffb020;font-size:11px;font-weight:900;padding:4px 8px;border-radius:6px;flex-shrink:0}
+  .msg-text{font-size:clamp(18px,3vw,34px);font-weight:900;word-break:break-word}
+  .main{flex:1;min-height:0;display:grid;grid-template-columns:2fr 1fr;gap:12px}
+  @media(max-width:720px){.main{grid-template-columns:1fr}}
+  .panel{background:#0d1320;border:2px solid #23314d;border-radius:12px;padding:14px 18px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .panel-live{border-left:6px solid #2ee59d}
+  .panel-next{border-left:6px solid #ffb020;background:#111a2b}
+  .pill-live{color:#2ee59d;font-size:12px;font-weight:900;letter-spacing:1px}
+  .pill-next{color:#ffb020;font-size:12px;font-weight:900;letter-spacing:1px}
+  .live-title{margin:8px 0 0;font-size:clamp(22px,3.6vw,48px);font-weight:900;line-height:1.15;word-break:break-word}
+  .note-sep{margin-top:12px;padding-top:8px;border-top:1px solid #23314d;font-size:11px;font-weight:800;color:#8ea0bf;letter-spacing:1px}
+  .note{margin-top:8px;flex:1;overflow:auto;font-size:clamp(18px,2.5vw,34px);font-weight:700;line-height:1.35;color:#fff6c9;white-space:pre-wrap;word-break:break-word}
+  .note.empty{color:#4f5f7a;font-style:italic;font-weight:500}
+  .next-title{margin:8px 0 0;font-size:clamp(18px,2.6vw,36px);font-weight:800;color:#ffe3a8;word-break:break-word}
+  .ftr{display:flex;align-items:center;justify-content:space-between;background:#0d1320;border:2px solid #23314d;border-radius:12px;padding:10px 16px;font-size:14px}
+  .bpm{color:#00d2ff;font-size:18px;font-weight:900}
+  .conn{color:#8ea0bf;font-size:12px}
+  .back-link{color:#00d2ff;text-decoration:none;font-size:12px;font-weight:700}
+</style>
+</head>
+<body>
+  <header class="hdr">
+    <div>
+      <div class="lbl">GIỜ HỆ THỐNG</div>
+      <div id="wall-clock" class="mono clock">--:--:--</div>
+    </div>
+    <div class="mid-hdr">
+      <div class="badge">WEB STAGE</div>
+      <div id="blk-badge" class="blk-badge hidden">ĐANG ĐEN MÀN</div>
+    </div>
+    <div>
+      <div class="lbl" style="text-align:right">ĐỒNG HỒ SỰ KIỆN</div>
+      <div id="timer-text" class="mono timer">--:--</div>
+    </div>
+  </header>
+
+  <section id="msg-banner" class="msg-banner hidden">
+    <div class="msg-tag">TIN NHẮN SÂN KHẤU</div>
+    <div id="msg-text" class="msg-text"></div>
+  </section>
+
+  <main class="main">
+    <section class="panel panel-live">
+      <div class="pill-live">ĐANG CHẠY (LIVE)</div>
+      <h1 id="live-name" class="live-title">Chưa phát</h1>
+      <div class="note-sep">GHI CHÚ DIỄN GIẢ / KỸ THUẬT</div>
+      <div id="stage-note" class="note empty">Chưa có ghi chú cho Cue hiện tại</div>
+    </section>
+    <aside class="panel panel-next">
+      <div class="pill-next">KẾ TIẾP (NEXT)</div>
+      <h2 id="next-name" class="next-title">Trống</h2>
+    </aside>
+  </main>
+
+  <footer class="ftr">
+    <div>NHỊP BEAT: <span id="bpm-val" class="mono bpm">120 BPM</span></div>
+    <div id="conn-st" class="conn">Đang kết nối...</div>
+    <a class="back-link" href="/">Remote</a>
+  </footer>
+
+<script>
+  (function(){
+    function updateClock(){
+      const d=new Date();
+      const h=String(d.getHours()).padStart(2,'0');
+      const m=String(d.getMinutes()).padStart(2,'0');
+      const s=String(d.getSeconds()).padStart(2,'0');
+      document.getElementById('wall-clock').textContent=h+':'+m+':'+s;
+    }
+    updateClock();
+    setInterval(updateClock, 250);
+
+    function applyState(st){
+      if(!st) return;
+      document.getElementById('live-name').textContent=st.liveName||'Chưa phát';
+      document.getElementById('next-name').textContent=st.nextName||'Trống';
+      const timerEl=document.getElementById('timer-text');
+      timerEl.textContent=st.timerText||'--:--';
+      timerEl.classList.toggle('urgent', Boolean(st.timerUrgent));
+      document.getElementById('bpm-val').textContent=Math.round(Number(st.bpm)||120)+' BPM';
+      document.getElementById('blk-badge').classList.toggle('hidden', !st.blackout);
+
+      const noteEl=document.getElementById('stage-note');
+      const noteText=(st.stageNote||'').trim();
+      if(noteText){
+        noteEl.textContent=noteText;
+        noteEl.classList.remove('empty');
+      }else{
+        noteEl.textContent='Chưa có ghi chú cho Cue hiện tại';
+        noteEl.classList.add('empty');
+      }
+
+      const msgText=(st.stageMessage||'').trim();
+      document.getElementById('msg-text').textContent=msgText;
+      document.getElementById('msg-banner').classList.toggle('hidden', !msgText);
+    }
+
+    function connectWs(){
+      const proto=location.protocol==='https:'?'wss://':'ws://';
+      const ws=new WebSocket(proto+location.host);
+      ws.onopen=function(){
+        document.getElementById('conn-st').textContent='Đã đồng bộ trực tiếp';
+        ws.send(JSON.stringify({type:'stage-subscribe'}));
+      };
+      ws.onmessage=function(ev){
+        try{
+          const msg=JSON.parse(ev.data);
+          if(msg.type==='stage-state' || msg.type==='state'){
+            applyState(msg.state);
+          }
+        }catch(_){}
+      };
+      ws.onclose=function(){
+        document.getElementById('conn-st').textContent='Mất kết nối — đang thử lại...';
+        setTimeout(connectWs, 2000);
+      };
+    }
+    connectWs();
+  })();
+</script>
+</body>
+</html>`;
+}
+
+/** Phát trạng thái show tới tất cả thiết bị remote đã xác thực và màn /stage đã đăng ký */
 function broadcastRemoteState() {
   if (!remoteWss) return;
-  const payload = JSON.stringify({
+  const authPayload = JSON.stringify({
     type: 'state',
-    state: {
-      liveName: remoteState.liveName,
-      nextName: remoteState.nextName,
-      blackout: remoteState.blackout
-    }
+    state: getAuthRemoteStateSnapshot()
+  });
+  const stagePayload = JSON.stringify({
+    type: 'stage-state',
+    state: getPublicStageStateSnapshot()
   });
   let count = 0;
   remoteWss.clients.forEach((client) => {
-    if (client.readyState === 1 && client._authed) {
+    if (client.readyState !== 1) return;
+    if (client._authed) {
       count++;
-      client.send(payload);
+      client.send(authPayload);
+    } else if (client._stageSubscribed) {
+      client.send(stagePayload);
     }
   });
   remoteState.clients = count;
@@ -616,7 +1285,7 @@ function broadcastRemoteState() {
 function startRemoteServer(pin) {
   return new Promise((resolve) => {
     if (remoteHttpServer) {
-      remoteState.pin = String(pin || remoteState.pin).slice(0, 4).padStart(4, '0');
+      remoteState.pin = String(pin || remoteState.pin).replace(/\D/g, '').slice(0, 4).padStart(4, '0');
       saveSettings({ remotePin: remoteState.pin });
       resolve({ ...remoteState });
       return;
@@ -626,9 +1295,13 @@ function startRemoteServer(pin) {
     saveSettings({ remotePin: cleanPin });
 
     const server = http.createServer((req, res) => {
-      if (req.url === '/' || req.url.startsWith('/?')) {
+      const reqPath = (req.url || '/').split('?')[0];
+      if (reqPath === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(buildRemoteMobileHtml());
+      } else if (reqPath === '/stage') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(buildWebStageHtml());
       } else {
         res.writeHead(404);
         res.end('Not found');
@@ -638,19 +1311,27 @@ function startRemoteServer(pin) {
     const wss = new WebSocketServer({ server });
     wss.on('connection', (socket) => {
       socket._authed = false;
+      socket._stageSubscribed = false;
       socket.on('message', (raw) => {
         try {
           const msg = JSON.parse(raw.toString());
+          if (!msg || typeof msg !== 'object') return;
+
+          if (msg.type === 'stage-subscribe') {
+            socket._stageSubscribed = true;
+            socket.send(JSON.stringify({
+              type: 'stage-state',
+              state: getPublicStageStateSnapshot()
+            }));
+            return;
+          }
+
           if (msg.type === 'auth') {
             if (String(msg.pin) === remoteState.pin) {
               socket._authed = true;
               socket.send(JSON.stringify({
                 type: 'auth-ok',
-                state: {
-                  liveName: remoteState.liveName,
-                  nextName: remoteState.nextName,
-                  blackout: remoteState.blackout
-                }
+                state: getAuthRemoteStateSnapshot()
               }));
               broadcastRemoteState();
             } else {
@@ -658,8 +1339,10 @@ function startRemoteServer(pin) {
             }
             return;
           }
+
           if (!socket._authed) return;
-          if (msg.type === 'cmd' && ['GO', 'BACK', 'BLACK', 'STOP'].includes(msg.cmd)) {
+
+          if (msg.type === 'cmd' && isAllowedRemoteCommand(msg.cmd)) {
             if (controlWindow && !controlWindow.isDestroyed()) {
               controlWindow.webContents.send('remote-command', msg.cmd);
             }
@@ -733,6 +1416,18 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.on('led-video-beat', (_event, payload) => {
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('led-video-beat', payload);
+    }
+  });
+
+  ipcMain.on('led-video-telemetry', (_event, payload) => {
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('led-video-telemetry', payload);
+    }
+  });
+
   ipcMain.on('renderer-error', (_event, payload) => {
     logError('renderer', JSON.stringify(payload));
   });
@@ -741,11 +1436,141 @@ function registerIpcHandlers() {
     isShowRunning = Boolean(running);
   });
 
+  // Stage Display IPC
+  ipcMain.handle('stage:open', (_event, displayId) => openStageWindow(displayId));
+  ipcMain.handle('stage:close', () => closeStageWindow());
+  ipcMain.handle('stage:status', () => getStageStatusPayload());
+
+  ipcMain.on('stage:send', (_event, payload) => {
+    if (payload && typeof payload === 'object') {
+      lastStagePayload = payload;
+      if (stageWindow && !stageWindow.isDestroyed()) {
+        stageWindow.webContents.send('stage-update', payload);
+      }
+      if (payload.liveName !== undefined) remoteState.liveName = payload.liveName || 'Chưa phát';
+      if (payload.nextName !== undefined) remoteState.nextName = payload.nextName || 'Trống';
+      if (payload.bpm !== undefined && Number.isFinite(Number(payload.bpm))) {
+        remoteState.bpm = Number(payload.bpm);
+      }
+      if (payload.stageNote !== undefined) remoteState.stageNote = String(payload.stageNote || '');
+      if (payload.timerText !== undefined) remoteState.timerText = String(payload.timerText || '--:--');
+      if (payload.stageMessage !== undefined) remoteState.stageMessage = String(payload.stageMessage || '');
+      if (payload.blackout !== undefined) remoteState.blackout = Boolean(payload.blackout);
+      const urgentFlag = Boolean(
+        payload.timerUrgent ||
+        payload.urgent ||
+        payload.isUrgent ||
+        payload.timerWarning ||
+        (payload.timerDisplay && payload.timerDisplay.urgent)
+      );
+      remoteState.timerUrgent = urgentFlag;
+
+      const sig = JSON.stringify(getPublicStageStateSnapshot());
+      if (sig !== lastPublicStageSig) {
+        lastPublicStageSig = sig;
+        if (remoteWss) {
+          const msg = JSON.stringify({ type: 'stage-state', state: getPublicStageStateSnapshot() });
+          remoteWss.clients.forEach((client) => {
+            if (client.readyState === 1 && client._stageSubscribed) {
+              client.send(msg);
+            }
+          });
+        }
+      }
+    }
+  });
+
+  ipcMain.on('stage-ready', () => {
+    if (lastStagePayload && stageWindow && !stageWindow.isDestroyed()) {
+      stageWindow.webContents.send('stage-update', lastStagePayload);
+    }
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('stage-ready', getStageStatusPayload());
+    }
+  });
+
+  // DMX Art-Net / sACN IPC
+  ipcMain.handle('dmx:configure', (_event, cfg) => {
+    const eng = getDmxEngine();
+    if (!eng) {
+      return {
+        enabled: false,
+        protocol: cfg && cfg.protocol === 'sacn' ? 'sacn' : 'artnet',
+        host: (cfg && cfg.host) || '255.255.255.255',
+        port: (cfg && cfg.port) || 6454,
+        universe: (cfg && cfg.universe) || 0,
+        fps: (cfg && cfg.fps) || 35,
+        packetsSent: 0,
+        lastError: 'DMX module unavailable'
+      };
+    }
+    return eng.configure(cfg);
+  });
+
+  ipcMain.on('dmx:frame', (_event, channels) => {
+    const eng = dmxEngine || getDmxEngine();
+    if (eng) {
+      eng.updateFrame(channels);
+    }
+  });
+
+  ipcMain.handle('dmx:status', () => {
+    const eng = dmxEngine || getDmxEngine();
+    if (!eng) {
+      return {
+        enabled: false,
+        protocol: 'artnet',
+        host: '255.255.255.255',
+        port: 6454,
+        universe: 0,
+        fps: 35,
+        packetsSent: 0,
+        lastError: null
+      };
+    }
+    return eng.getStatus();
+  });
+
+  // OSC UDP Listener IPC
+  ipcMain.handle('osc:toggle', async (_event, payload) => {
+    const enable = Boolean(payload && payload.enable);
+    const port = Number(payload && payload.port) || 9000;
+    const srv = getOscServer();
+    if (!srv) {
+      return { enabled: false, port, lastError: 'OSC module unavailable' };
+    }
+    if (enable) {
+      return await srv.start(port, (msg) => {
+        if (controlWindow && !controlWindow.isDestroyed()) {
+          controlWindow.webContents.send('osc-message', msg);
+        }
+      });
+    }
+    return srv.stop();
+  });
+
+  ipcMain.handle('osc:status', () => {
+    const srv = oscServer || getOscServer();
+    if (!srv) {
+      return { enabled: false, port: 9000, lastError: null };
+    }
+    return srv.getStatus();
+  });
+
   ipcMain.on('remote:broadcastState', (_event, st) => {
     if (st && typeof st === 'object') {
-      remoteState.liveName = st.liveName || 'Chưa phát';
-      remoteState.nextName = st.nextName || 'Trống';
-      remoteState.blackout = Boolean(st.blackout);
+      if (st.liveName !== undefined) remoteState.liveName = st.liveName || 'Chưa phát';
+      if (st.nextName !== undefined) remoteState.nextName = st.nextName || 'Trống';
+      if (st.blackout !== undefined) remoteState.blackout = Boolean(st.blackout);
+      if (st.bpm !== undefined && Number.isFinite(Number(st.bpm))) remoteState.bpm = Number(st.bpm);
+      if (st.ledMode !== undefined) remoteState.ledMode = String(st.ledMode || 'off');
+      if (st.overlays !== undefined && typeof st.overlays === 'object') remoteState.overlays = st.overlays;
+      if (Array.isArray(st.sfxNames)) remoteState.sfxNames = st.sfxNames;
+      if (st.stageNote !== undefined) remoteState.stageNote = String(st.stageNote || '');
+      if (st.timerText !== undefined) remoteState.timerText = String(st.timerText || '--:--');
+      if (st.stageMessage !== undefined) remoteState.stageMessage = String(st.stageMessage || '');
+      if (st.timerUrgent !== undefined) remoteState.timerUrgent = Boolean(st.timerUrgent);
+      lastPublicStageSig = JSON.stringify(getPublicStageStateSnapshot());
       broadcastRemoteState();
     }
   });
@@ -904,6 +1729,22 @@ function registerIpcHandlers() {
       }
       for (const pad of cloned.sfxPads || []) {
         if (pad.path) pad.path = copyOne(pad.path);
+      }
+      if (cloned.overlays && cloned.overlays.ov2 && cloned.overlays.ov2.path) {
+        cloned.overlays.ov2.path = copyOne(cloned.overlays.ov2.path);
+      }
+      if (cloned.vjDeck && Array.isArray(cloned.vjDeck.decks)) {
+        for (const deck of cloned.vjDeck.decks) {
+          if (!Array.isArray(deck)) continue;
+          for (const layerRow of deck) {
+            if (!Array.isArray(layerRow)) continue;
+            for (const clip of layerRow) {
+              if (clip && (clip.kind === 'image' || clip.kind === 'video') && clip.path) {
+                clip.path = copyOne(clip.path);
+              }
+            }
+          }
+        }
       }
 
       fs.writeFileSync(targetJson, JSON.stringify(cloned, null, 2), 'utf8');
@@ -1069,17 +1910,19 @@ function runSmokeTestMode() {
       console.error('[SMOKE_ERRORS]', consoleErrors);
     }
     isQuitting = true;
+    stopAllSubsystems();
     app.exit(ok ? 0 : 1);
   }, 3500);
 }
 
 app.whenReady().then(() => {
-  // Cho phép thu tín hiệu âm thanh Line-In / Soundcard / Mixer phục vụ dò beat DJ
+  // Cho phép thu tín hiệu âm thanh Line-In / Soundcard / Mixer & Camera cho Live Video Input
+  const allowedPermissions = new Set(['media', 'audioCapture', 'videoCapture']);
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    return permission === 'media' || permission === 'audioCapture';
+    return allowedPermissions.has(permission);
   });
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === 'media' || permission === 'audioCapture');
+    callback(allowedPermissions.has(permission));
   });
 
   powerBlockerId = powerSaveBlocker.start('prevent-display-sleep');
@@ -1095,6 +1938,6 @@ app.on('window-all-closed', () => {
   if (powerBlockerId !== null && powerSaveBlocker.isStarted(powerBlockerId)) {
     powerSaveBlocker.stop(powerBlockerId);
   }
-  stopRemoteServer();
+  stopAllSubsystems();
   app.quit();
 });
